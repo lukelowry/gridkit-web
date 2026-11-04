@@ -1,7 +1,7 @@
 # The solver on the GridKit runtime that GRIDKIT_RUNTIME_IMAGE names; Compose passes it in from .env.
 ARG GRIDKIT_RUNTIME_IMAGE
 
-FROM golang:1.26-alpine AS build
+FROM golang:1.27-alpine AS build
 WORKDIR /solver
 COPY services/solver/ .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /usr/local/bin/solver .
