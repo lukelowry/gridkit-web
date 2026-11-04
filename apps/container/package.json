@@ -1,0 +1,13 @@
+{
+  "name": "@gridkit/container",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "smoke": "vitest run --mode smoke"
+  },
+  "devDependencies": {
+    "@gridkit/editor": "workspace:*",
+    "@gridkit/library": "workspace:*"
+  }
+}

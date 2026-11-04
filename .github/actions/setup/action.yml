@@ -1,0 +1,15 @@
+name: Setup
+description: The workspace as every job needs it, after checkout - pnpm and Node at their pinned versions, dependencies, and .env.
+runs:
+  using: composite
+  steps:
+    # The pnpm in package.json's packageManager, and the Node in .node-version, with pnpm's store cached between runs.
+    - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      with:
+        node-version-file: .node-version
+        cache: pnpm
+    - run: pnpm install --frozen-lockfile
+      shell: bash
+    - run: cp .env.example .env
+      shell: bash

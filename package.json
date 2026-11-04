@@ -1,0 +1,24 @@
+{
+  "name": "gridkit-editor",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.30.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "pnpm -F @gridkit/editor dev",
+    "check": "pnpm -r check",
+    "test": "vitest run",
+    "e2e": "pnpm -F @gridkit/editor e2e",
+    "smoke": "pnpm -F @gridkit/solver smoke && pnpm -F @gridkit/editor smoke && pnpm -F @gridkit/container smoke",
+    "deploy:web": "pnpm -F @gridkit/static deploy:web",
+    "preview:web": "pnpm -F @gridkit/static preview:web",
+    "deploy:library": "pnpm -F @gridkit/library-service deploy:library"
+  },
+  "devDependencies": {
+    "@types/node": "^25.2.3",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.0"
+  }
+}

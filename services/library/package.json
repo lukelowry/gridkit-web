@@ -1,0 +1,14 @@
+{
+  "name": "@gridkit/library-service",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "deploy:library": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@gridkit/library": "workspace:*",
+    "wrangler": "^4.151.3"
+  }
+}

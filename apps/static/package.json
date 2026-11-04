@@ -1,0 +1,17 @@
+{
+  "name": "@gridkit/static",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "node build.ts",
+    "deploy:web": "node build.ts && wrangler deploy",
+    "preview:web": "node build.ts && wrangler versions upload --preview-alias preview"
+  },
+  "devDependencies": {
+    "@gridkit/editor": "workspace:*",
+    "vite": "^7.3.1",
+    "wrangler": "^4.151.3"
+  }
+}

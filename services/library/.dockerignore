@@ -1,0 +1,3 @@
+# The image takes its Caddyfile alone; the Worker beside it is deployed to Cloudflare.
+*
+!Caddyfile

@@ -1,0 +1,60 @@
+name: gridkit
+
+# The local stack. Each service names the settings it reads; .env (copied from .env.example) gives their values.
+x-hardened: &hardened
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: [/tmp]
+  restart: unless-stopped
+
+services:
+  editor:
+    <<: *hardened
+    image: ${GRIDKIT_REGISTRY}gridkit-editor:${GRIDKIT_VERSION}
+    build:
+      context: .
+      dockerfile: apps/container/Dockerfile
+    ports: ["127.0.0.1:${GRIDKIT_EDITOR_PORT}:8080"]
+    environment:
+      # Inside the stack, this machine's own services are the ones beside the editor.
+      GRIDKIT_SOLVER_URL: ${GRIDKIT_SOLVER_URL:-http://solver:8080}
+      GRIDKIT_SOLVER_TOKEN: ${GRIDKIT_SOLVER_TOKEN}
+      GRIDKIT_LIBRARY_URL: ${GRIDKIT_LIBRARY_URL:-http://library:8080}
+      GRIDKIT_LIBRARY_TOKEN: ${GRIDKIT_LIBRARY_TOKEN}
+
+  library:
+    <<: *hardened
+    image: ${GRIDKIT_REGISTRY}gridkit-library:${GRIDKIT_VERSION}
+    build:
+      context: ./services/library
+    ports: ["127.0.0.1:${GRIDKIT_LIBRARY_PORT}:8080"]
+    environment:
+      GRIDKIT_LIBRARY_TOKEN: ${GRIDKIT_LIBRARY_TOKEN}
+    volumes:
+      - type: bind
+        source: ${GRIDKIT_LIBRARY_DIR}
+        target: /data
+        read_only: true
+        bind:
+          create_host_path: false
+
+  solver:
+    <<: *hardened
+    image: ${GRIDKIT_REGISTRY}gridkit-solver:${GRIDKIT_VERSION}
+    build:
+      context: .
+      dockerfile: services/solver/Dockerfile
+      args:
+        GRIDKIT_RUNTIME_IMAGE: ${GRIDKIT_RUNTIME_IMAGE}
+    # The GridKit runtime supports amd64 only.
+    platform: linux/amd64
+    ports: ["127.0.0.1:${GRIDKIT_SOLVER_PORT}:8080"]
+    environment:
+      # The editor beside it reaches it by its name in this stack.
+      GRIDKIT_SOLVER_HOSTS: ${GRIDKIT_SOLVER_HOSTS},solver
+      GRIDKIT_SOLVER_TOKEN: ${GRIDKIT_SOLVER_TOKEN}
+    volumes: [runs:/data]
+
+volumes:
+  runs:

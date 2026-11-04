@@ -1,0 +1,13 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "gridkit-library",
+  "account_id": "bcfa915786f8fd9c888645e96afbcb0c",
+  "compatibility_date": "2026-10-20",
+  // The library on Cloudflare: worker.ts answering with the files in this bucket. `wrangler r2 object put` changes them;
+  // `wrangler secret put GRIDKIT_LIBRARY_TOKEN` makes it private to editors that hold the token.
+  "main": "worker.ts",
+  "r2_buckets": [{ "binding": "LIBRARY", "bucket_name": "gridkit-library" }],
+  // Reached at its workers.dev address, which the hosted editor names in its GRIDKIT_LIBRARY_URL secret.
+  "workers_dev": true,
+  "preview_urls": false
+}

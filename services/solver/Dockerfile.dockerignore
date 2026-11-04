@@ -1,0 +1,3 @@
+**
+!services/solver/**
+services/solver/*_test.go

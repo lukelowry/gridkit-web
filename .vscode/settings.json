@@ -1,0 +1,18 @@
+{
+  "npm.packageManager": "pnpm",
+  "VsCodeTaskButtons.showCounter": false,
+  "VsCodeTaskButtons.tasks": [
+    {
+      "label": "$(preview) Preview",
+      "task": "Web: Preview",
+      "alignment": "left",
+      "tooltip": "Web preview: build and deploy the workers.dev preview"
+    },
+    {
+      "label": "$(cloud-upload) Publish",
+      "task": "Web: Publish",
+      "alignment": "left",
+      "tooltip": "Web production: build and publish to the domain in wrangler.jsonc"
+    }
+  ]
+}

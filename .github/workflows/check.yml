@@ -1,0 +1,42 @@
+name: Check
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+# A newer push to the same branch or pull request supersedes a run still going.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/setup
+      - run: pnpm check
+      - run: pnpm test
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: services/solver/go.mod
+          cache: false
+      - working-directory: services/solver
+        run: go vet ./... && go test -race ./...
+
+  # Every image as the local stack, each service requiring its token: library cases, real studies, and native GridKit
+  # checks, all through the editor container, which so proves it adds each token.
+  stack:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    env:
+      GRIDKIT_SOLVER_TOKEN: check-${{ github.run_id }}
+      GRIDKIT_LIBRARY_TOKEN: check-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/setup
+      - run: docker compose up --build -d --wait
+      - run: pnpm smoke
+      - if: failure()
+        run: docker compose logs
