@@ -1,0 +1,13 @@
+{
+  "header": {
+    "format_version": 0.2,
+    "format_revision": 0,
+    "case_name": "Untitled",
+    "case_description": "",
+    "case_comments": ""
+  },
+  "params": { "freq_base": 60, "va_base": 100000000 },
+  "buses": [],
+  "devices": [],
+  "signals": []
+}

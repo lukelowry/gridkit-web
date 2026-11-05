@@ -1,0 +1,14 @@
+{
+  "name": "@gridkit/solver",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./http": "./src/http/index.ts",
+    "./wasm": "./src/wasm/index.ts"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "smoke": "vitest run --mode smoke"
+  }
+}

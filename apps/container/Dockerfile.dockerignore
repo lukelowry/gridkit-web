@@ -1,0 +1,17 @@
+**
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!tsconfig.base.json
+!apps/container/**
+!packages/ui/**
+!packages/library/**
+!packages/solver/**
+**/node_modules
+**/dist
+**/test-results
+packages/ui/tests
+packages/library/test
+packages/solver/test
+**/*.test.ts
+**/*.smoke.ts
