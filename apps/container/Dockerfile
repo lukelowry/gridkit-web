@@ -1,5 +1,5 @@
 # The editor image: Caddy serving the built editor and mounting its services, the solver and the library, at api/<name>/.
-FROM node:24-bookworm-slim AS build
+FROM node:25-bookworm-slim AS build
 WORKDIR /build
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
