@@ -1,0 +1,27 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+jobs:
+  static:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: { name: github-pages, url: '${{ steps.pages.outputs.page_url }}' }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version-file: .node-version, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -F @gridkit/static build
+      - run: cd apps/static/dist && zip -qr "$GITHUB_WORKSPACE/gridkit-web-$GITHUB_REF_NAME.zip" .
+      - run: gh release create "$GITHUB_REF_NAME" "gridkit-web-$GITHUB_REF_NAME.zip" --generate-notes
+        env: { GH_TOKEN: '${{ github.token }}' }
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with: { path: apps/static/dist }
+      - id: pages
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

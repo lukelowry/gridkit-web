@@ -1,0 +1,39 @@
+name: gridkit
+
+x-hardened: &hardened
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: [/tmp]
+  restart: unless-stopped
+
+services:
+  editor:
+    <<: *hardened
+    build: { context: ., dockerfile: apps/container/Dockerfile }
+    ports: ["127.0.0.1:${GRIDKIT_EDITOR_PORT}:8080"]
+    environment:
+      GRIDKIT_SOLVER_URL: ${GRIDKIT_SOLVER_URL:-http://solver:8080}
+      GRIDKIT_SOLVER_TOKEN:
+      GRIDKIT_LIBRARY_URL: ${GRIDKIT_LIBRARY_URL:-http://library:8080}
+
+  solver:
+    <<: *hardened
+    build: ./services/solver
+    platform: linux/amd64  # GridKit's runtime is amd64 only
+    environment:
+      GRIDKIT_SOLVER_HOSTS: solver
+    volumes: [runs:/data]
+
+  library:
+    <<: *hardened
+    build: ./services/library
+    volumes:
+      - type: bind
+        source: ${GRIDKIT_LIBRARY_DIR}
+        target: /data
+        read_only: true
+        bind: { create_host_path: false }
+
+volumes:
+  runs:

@@ -1,0 +1,12 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "gridkit-library",
+  "account_id": "bcfa915786f8fd9c888645e96afbcb0c",
+  "compatibility_date": "2026-10-20",
+  // The library on Cloudflare: worker.ts answering with the files in this bucket, which `wrangler r2 object put` changes.
+  "main": "worker.ts",
+  "r2_buckets": [{ "binding": "LIBRARY", "bucket_name": "gridkit-library" }],
+  // Every copy of the editor's site, pdsim.us and GitHub Pages alike, reads it at this workers.dev address.
+  "workers_dev": true,
+  "preview_urls": false
+}

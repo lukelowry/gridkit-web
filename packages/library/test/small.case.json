@@ -1,0 +1,50 @@
+{
+  "header": {
+    "format_version": 0.2,
+    "format_revision": 0,
+    "case_name": "Small example",
+    "case_description": "Two-bus example",
+    "case_comments": "",
+    "extension": { "source": "editor tests" }
+  },
+  "params": { "freq_base": 60, "va_base": 100000000, "custom": true },
+  "buses": [
+    {
+      "number": 1,
+      "class": "Bus",
+      "name": "North",
+      "params": { "kv": 230 },
+      "init": { "Vr": 1, "Vi": 0 },
+      "mon": ["Vm", "Va"],
+      "extension": { "longitude": -90.1, "latitude": 35.1 }
+    },
+    {
+      "number": 2,
+      "class": "Bus",
+      "name": "South",
+      "params": { "kv": 230 },
+      "init": { "Vr": 1, "Vi": 0 },
+      "extension": { "longitude": -90.2, "latitude": 35.0 }
+    }
+  ],
+  "devices": [
+    {
+      "class": "Branch",
+      "id": "line-1",
+      "ports": { "bus1": 1, "bus2": 2 },
+      "params": { "R": 0.01, "X": 0.1, "tap": 1, "phase": 0 },
+      "extension": { "polyline": [[-90.15, 35.05]] }
+    },
+    {
+      "class": "FutureDevice",
+      "id": "future-1",
+      "ports": { "input": 0 },
+      "params": { "custom": [1, "retain", null] },
+      "mon": ["output"],
+      "extension": { "custom": { "enabled": true } }
+    }
+  ],
+  "signals": [{ "signal_id": 0, "name": "control", "extension": { "keep": true } }],
+  "monitors": [{ "format": "CSV", "file_name": "output.csv" }],
+  "extension": { "project": "preserve me", "ordered": [3, 1, 2] }
+}
