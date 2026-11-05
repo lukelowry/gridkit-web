@@ -1,0 +1,7 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    { "label": "Web: Preview", "type": "npm", "script": "preview:web", "problemMatcher": [] },
+    { "label": "Web: Publish", "type": "npm", "script": "deploy:web", "problemMatcher": [] }
+  ]
+}

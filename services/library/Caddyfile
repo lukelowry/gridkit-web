@@ -1,0 +1,41 @@
+{
+	admin off
+	persist_config off
+	auto_https off
+	grace_period 5s
+}
+
+# The library: the files mounted read-only at /data, answered at this service's root, where a deployment mounts it as
+# api/library/. GET <folder>/ lists a folder as JSON (name, size, mod_time, is_dir) and GET <path> is a file; worker.ts
+# answers the same from R2.
+:8080 {
+	root * /data
+	header {
+		Cache-Control no-cache
+		X-Content-Type-Options nosniff
+	}
+	@write not method GET HEAD
+
+	route {
+		respond /health 204
+		header @write {
+			Content-Type application/json
+			Allow "GET, HEAD"
+		}
+		respond @write `{"code":"read-only","message":"The library is read-only."}` 405
+		request_header Accept application/json
+		encode gzip
+		file_server browse {
+			hide .*
+		}
+	}
+
+	handle_errors 404 {
+		header Content-Type application/json
+		respond `{"code":"missing","message":"The library has no such file."}` 404
+	}
+	handle_errors {
+		header Content-Type application/json
+		respond `{"code":"library","message":"{err.status_text}"}` {err.status_code}
+	}
+}

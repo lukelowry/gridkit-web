@@ -1,0 +1,58 @@
+type Shape = string | readonly [number, number, number];
+
+export const glyphs = {
+  solver: ['M12 2.5H4l4.5 5.5L4 13.5h8'],
+  fault: ['M9 1.5 3.5 9H8l-1 5.5L12.5 7H8z'],
+  // A flag planted where a run's deviations are measured from.
+  reference: ['M4.5 14.5v-13h8l-2.5 3 2.5 3h-8'],
+  delta: ['M8 2.5 13.5 13h-11z'],
+  percent: ['M12.5 3.5l-9 9', [5, 5, 1.5], [11, 11, 1.5]],
+  // A mark's shapes and its strokes, drawn as what they choose.
+  'shape-ellipse': [[8, 8, 5]],
+  'shape-rectangle': ['M2.5 4.5h11v7h-11z'],
+  'shape-rounded': ['M5 4.5h6a2.5 2.5 0 0 1 2.5 2.5v2a2.5 2.5 0 0 1-2.5 2.5H5A2.5 2.5 0 0 1 2.5 9V7A2.5 2.5 0 0 1 5 4.5z'],
+  'shape-diamond': ['M8 2.5 13.5 8 8 13.5 2.5 8z'],
+  'shape-block': ['M4 3.5h8v9H4zM1.5 8H4M12 8h2.5'],
+  'route-straight': ['M3 13 13 3'],
+  'route-geodesic': ['M2.5 12.5C4 5 12 5 13.5 12.5'],
+  'line-open': [[3, 10, 1.5], [13, 10, 1.5], 'M4.5 10 11 4M1 10h.5M14.5 10h.5'],
+  'line-close': [[3, 10, 1.5], [13, 10, 1.5], 'M4.5 10h7M1 10h.5M14.5 10h.5'],
+  check: ['m3 8 3.5 3.5L13 4'],
+  play: ['M5 3l8 5-8 5z'],
+  pause: ['M5 3v10M11 3v10'],
+  stop: ['M4 4h8v8H4z'],
+  info: [[8, 8, 5.5], 'M8 7.5v3.5M8 5v.01'],
+  network: ['M4.6 9.8 7 5.7M9.4 5.6l2 3.2', [3.5, 11.5, 2], [8, 4, 2], [12.5, 10.5, 2]],
+  table: ['M2.5 2.5h11v11h-11zM2.5 6h11M6.5 6v7.5M2.5 9.75h11'],
+  columns: ['M2.5 2.5h11v11h-11zM6.25 2.5v11M10 2.5v11'],
+  mappings: ['M2 4h3M9 4h5M2 12h7M13 12h1', [7, 4, 2], [11, 12, 2]],
+  warning: ['M8 2 14 13H2zM8 6v3M8 11v.01'],
+  search: [[6.75, 6.75, 4.25], 'M9.9 9.9 13.5 13.5'],
+  close: ['m4 4 8 8M12 4l-8 8'],
+  more: [[3, 8, 0.5], [8, 8, 0.5], [13, 8, 0.5]],
+  file: ['M3.5 1.75h6l3 3v9.5h-9zM9.5 1.75v3h3'],
+  star: ['m8 1.5 2 4.1 4.5.7-3.25 3.2.75 4.5-4-2.1-4 2.1.75-4.5L1.5 6.3 6 5.6z'],
+  library: ['M2.5 2.5v11M6 2.5v11M9.5 3l2.5-.5 2 10.5-2.5.5z'],
+  folder: ['M2 3.5h4l1.5 2H14v7.5H2z'],
+  chevron: ['m5 6.5 3 3 3-3'],
+  up: ['m5 9.5 3-3 3 3'],
+  next: ['m6.5 5 3 3-3 3'],
+  sort: ['M4 2.5v11M1.5 11 4 13.5 6.5 11M9 4h5M9 8h3M9 12h1'],
+  bus: ['M3 4h10v8H3z'],
+  open: ['M2 7V3.5h4l1.5 2H14M2 7h12l-2 6H2z'],
+  download: ['M2.5 11v2.5h11V11M8 2.5v7M5 6.5l3 3 3-3'],
+  // A video frame: the same export glyph in navigation and preferences.
+  export: ['M2 3.5h8.5v9H2zM10.5 6 14 4v8l-3.5-2'],
+  undo: ['M5.5 4 2.5 7l3 3', 'M2.5 7h7a3.5 3.5 0 0 1 0 7H8'],
+  fit: ['M2.5 5.5v-3h3M10.5 2.5h3v3M13.5 10.5v3h-3M5.5 13.5h-3v-3M6 6h4v4H6z'],
+  // The workspace with a panel docked along one side.
+  'dock-bottom': ['M2.5 2.5h11v11h-11zM2.5 9.5h11M5.5 11.5h5'],
+  'dock-right': ['M2.5 2.5h11v11h-11zM9.5 2.5v11M11.5 5.5v5'],
+  settings: ['M6.5 1.5h3l.4 1.8 1.2.7 1.8-.5 1.5 2.6-1.4 1.3v1.2l1.4 1.3-1.5 2.6-1.8-.5-1.2.7-.4 1.8h-3l-.4-1.8-1.2-.7-1.8.5-1.5-2.6L3 8.6V7.4L1.6 6.1l1.5-2.6 1.8.5 1.2-.7z', [8, 8, 2.25]],
+  theme: [[8, 8, 5.5], 'M8 2.5v11M8 5h4.6M8 8h5.5M8 11h4.6'],
+  'projection-flat': ['M2 4l4-1.5 4 1.5 4-1.5V12l-4 1.5L6 12l-4 1.5zM6 2.5V12M10 4v9.5'],
+  'projection-tilt': ['M5 4h6l3 8H2zM8 4v8M3.5 8h9'],
+  'projection-globe': [[8, 8, 5.5], 'M2.75 8h10.5M8 2.5c1.65 1.45 2.5 3.25 2.5 5.5S9.65 12.05 8 13.5', 'M8 2.5C6.35 3.95 5.5 5.75 5.5 8s.85 4.05 2.5 5.5'],
+} as const satisfies Record<string, readonly Shape[]>;
+
+export type IconName = keyof typeof glyphs;
