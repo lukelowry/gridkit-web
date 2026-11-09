@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
   encode: vi.fn(async () => Uint8Array.of(137, 80)),
 }));
 vi.mock('latkit', () => ({
-  View: { create: async (_canvas: null, scene: Scene, options: { sources: unknown; camera: unknown; gpu: unknown }) => {
+  View: { create: async (_canvas: null, scene: Scene, options: { sources: unknown; camera: unknown }) => {
     const view = { scene, ...options, at: 0, orbit: 0, fit: vi.fn(async () => null), destroy: vi.fn() } as unknown as View;
     mocks.made.push(view);
     return view;

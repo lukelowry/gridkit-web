@@ -19,21 +19,19 @@ async function openResults(page: Page, edge = false) {
   return panel;
 }
 
-// Inspect rendered pixels in the browser, returning one point instead of transferring a full RGBA buffer.
-async function drawnPoint(page: Page, canvas: Locator, kind: 'blue' | 'red' | 'south' | 'edge', limit?: number) {
-  const image = (await canvas.screenshot()).toString('base64');
+// Inspect the drawn pixels in the browser, returning one point instead of transferring them all. latkit copies each frame
+// into the canvas's 2D context.
+async function drawnPoint(canvas: Locator, kind: 'blue' | 'red' | 'south' | 'edge', limit?: number) {
   const bounds = (await canvas.boundingBox())!;
-  const result = await page.evaluate(async ({ image, kind, limit }) => {
-    const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(image), char => char.charCodeAt(0))], { type: 'image/png' }));
-    const sample = document.createElement('canvas'); sample.width = bitmap.width; sample.height = bitmap.height;
-    const ctx = sample.getContext('2d')!; ctx.drawImage(bitmap, 0, 0); bitmap.close();
-    const { width, height } = sample, data = ctx.getImageData(0, 0, width, height).data;
+  const result = await canvas.evaluate((canvas: HTMLCanvasElement, { kind, limit }) => {
+    const { width, height } = canvas, data = canvas.getContext('2d')!.getImageData(0, 0, width, height).data;
+    const right = limit === undefined ? width : limit * width / canvas.clientWidth;
     let point: [number, number] | null = null, score = Infinity;
     const colored: [number, number][] = [];
     for (let y = 16; y < height - 30; y++) for (let x = 0; x < width; x++) {
       const i = (y * width + x) * 4, r = data[i]!, g = data[i + 1]!, b = data[i + 2]!;
       const matches = kind === 'blue' ? b > r + 40 && g > r + 20 : r > g + 35 && r > b + 20;
-      if (!matches || x < 10 || x > (limit ?? width) - 20) continue;
+      if (!matches || x < 10 || x > right - 20) continue;
       if (kind === 'south' || kind === 'edge') { colored.push([x, y]); continue; }
       if (x < 35 || y < 30) continue;
       const next = Math.abs(y - height * .4) + Math.abs(x - width * .3);
@@ -46,7 +44,7 @@ async function drawnPoint(page: Page, canvas: Locator, kind: 'blue' | 'red' | 's
       if (points.length) point = [points.reduce((sum, p) => sum + p[0], 0) / points.length, points.reduce((sum, p) => sum + p[1], 0) / points.length];
     }
     return { point, width, height };
-  }, { image, kind, limit: limit === undefined ? undefined : limit - bounds.x });
+  }, { kind, limit: limit === undefined ? undefined : limit - bounds.x });
   expect(result.point, 'the renderer draws the requested trace or element').not.toBeNull();
   return [bounds.x + result.point![0] * bounds.width / result.width, bounds.y + result.point![1] * bounds.height / result.height] as const;
 }
@@ -57,7 +55,7 @@ for (const edge of [false, true]) test('monitor and network mirror hover and cli
   const readout = panel.getByLabel('Hovered series', { exact: true });
   const controls = [panel.getByLabel('Current simulation time'), panel.getByRole('button', { name: 'Play', exact: true }), panel.getByRole('combobox', { name: 'Playback speed' })];
   const before = await Promise.all(controls.map(control => control.boundingBox()));
-  const point = await drawnPoint(page, plot, edge ? 'red' : 'blue'), identity = edge ? 'Branch line-1' : 'Bus 2';
+  const point = await drawnPoint(plot, edge ? 'red' : 'blue'), identity = edge ? 'Branch line-1' : 'Bus 2';
   await page.mouse.move(...point);
   await expect(readout).toContainText(identity);
   await expect(network).toHaveAccessibleDescription(new RegExp('Hovered: ' + identity));
@@ -65,7 +63,7 @@ for (const edge of [false, true]) test('monitor and network mirror hover and cli
   await page.mouse.click(...point);
   await expect(network).toHaveAccessibleDescription(new RegExp('Selected: ' + identity));
   await expect(plot).toHaveAccessibleDescription(new RegExp('Selected: ' + identity));
-  const location = await drawnPoint(page, network, edge ? 'edge' : 'south', (await panel.boundingBox())!.x);
+  const location = await drawnPoint(network, edge ? 'edge' : 'south', (await panel.boundingBox())!.x);
   await page.mouse.move(10, 10);
   await expect(readout).toHaveText('');
   await page.mouse.move(...location);

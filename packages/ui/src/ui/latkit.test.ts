@@ -18,3 +18,15 @@ test('concurrent views share one device, and a failed request can be retried', a
   expect(second).toBe(gpu);
   expect(mocks.create).toHaveBeenCalledTimes(2);
 });
+
+test('a preload starts the load views share, and a failed one leaves the next view to try again', async () => {
+  const gpu = {};
+  mocks.create.mockRejectedValueOnce(new Error('unavailable')).mockResolvedValueOnce(gpu);
+  const { latkit, preload } = await import('./latkit.js');
+  preload();
+  await vi.waitFor(() => expect(mocks.create).toHaveBeenCalledTimes(1));
+  await expect(latkit()).resolves.toBe(gpu);
+  preload();
+  await expect(latkit()).resolves.toBe(gpu);
+  expect(mocks.create).toHaveBeenCalledTimes(2);
+});

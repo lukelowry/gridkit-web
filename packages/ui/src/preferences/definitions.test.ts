@@ -26,20 +26,14 @@ it('keeps preference drafts local until Apply and persists mappings once', () =>
   } finally { vi.unstubAllGlobals(); }
 });
 
-it('normalizes old preferences without losing valid Network interaction overrides', () => {
-  const old = {
-    theme: 'dark', networkGrid: false, pickRadius: 9, wheel: 'modifier',
-    diagramCorner: 7, diagramSnap: true,
-    overrides: { network: { pickRadius: 12, wheel: 'invalid', theme: 'light' }, diagram: { pickRadius: 20 } },
-    mappings: { network: { theme: { vertex: { radius: 8 } } }, diagram: { marks: [] } },
-  };
-  const preferences = createPreferences(JSON.stringify(old));
-  expect(preferences.value).toMatchObject({ theme: 'dark', networkGrid: false, pickRadius: 12, wheel: 'modifier' });
-  const stored = JSON.parse(preferences.serialize());
-  expect(stored).not.toHaveProperty('overrides');
-  expect(stored).not.toHaveProperty('diagramCorner');
-  expect(stored).not.toHaveProperty('diagramSnap');
-  expect(stored.mappings).toEqual({ network: old.mappings.network });
+it('keeps valid preferences and drops the rest', () => {
+  const stored = { theme: 'dark', networkGrid: false, pickRadius: 12, wheel: 'invalid', unknown: true,
+    mappings: { network: { theme: { vertex: { radius: 8 } } } } };
+  const preferences = createPreferences(JSON.stringify(stored));
+  expect(preferences.value).toMatchObject({ theme: 'dark', networkGrid: false, pickRadius: 12, wheel: 'wheel' });
+  const saved = JSON.parse(preferences.serialize());
+  expect(saved).not.toHaveProperty('unknown');
+  expect(saved.mappings).toEqual(stored.mappings);
   const restored = createPreferences(preferences.serialize());
   expect(restored.value.pickRadius).toBe(12);
   restored.reset('pickRadius');

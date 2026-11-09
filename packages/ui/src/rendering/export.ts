@@ -66,7 +66,7 @@ function pictureScene(scene: Scene, text: number): Scene {
 }
 
 /** Borrow the drawn network for As shown: this retains its actual layout, camera, insets, and selection.
- * Fit all owns a separate view. A plot has no graph layout and is cloned onto the network's GPU, including after recovery. */
+ * Fit all owns a separate view. A plot has no graph layout and is cloned. */
 async function pictureViews(request: ExportRequest, drawing: Drawing, frame: ExportFrame | undefined, signal?: AbortSignal) {
   const live = request.view, owned: View[] = [];
   const original = { scene: live.scene, camera: live.camera, insets: live.insets, orbit: live.orbit, at: live.at };
@@ -84,7 +84,7 @@ async function pictureViews(request: ExportRequest, drawing: Drawing, frame: Exp
     let main: View;
     if (fit) {
       const camera = original.camera;
-      main = await View.create(null, scene, { sources: live.sources, gpu: live.gpu,
+      main = await View.create(null, scene, { sources: live.sources,
         ...'zoom' in camera && { camera: { pitch: camera.pitch, bearing: camera.bearing } }, ...signal && { signal } });
       owned.push(main);
       main.selection = live.selection;
@@ -100,7 +100,7 @@ async function pictureViews(request: ExportRequest, drawing: Drawing, frame: Exp
     if (request.plot && layout.plot) {
       const source = request.plot.view;
       const camera: Camera = drawing.framing === 'fit' && frame ? { x: [...frame.span], y: null } : source.camera;
-      const traces = await View.create(null, pictureScene(source.scene, drawing.text), { sources: source.sources, gpu: live.gpu, camera, ...signal && { signal } });
+      const traces = await View.create(null, pictureScene(source.scene, drawing.text), { sources: source.sources, camera, ...signal && { signal } });
       owned.push(traces); traces.at = main.at; traces.insets = source.insets; traces.selection = source.selection;
       placed.push({ view: traces, region: layout.plot });
     }

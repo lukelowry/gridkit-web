@@ -3,8 +3,8 @@ import { Gpu, type Gestures } from 'latkit';
 let loading: Promise<Gpu> | undefined;
 
 /**
- * The page's GPU, which every view draws with: latkit makes the device while its WebAssembly compiles, and replaces it
- * when it is lost. A failed load is tried again on the next call.
+ * The page's GPU, which every view draws with: latkit downloads its shaders while its WebAssembly compiles, then makes
+ * the WebGL2 device, and moves the views to a new one when it is lost. A failed load is tried again on the next call.
  */
 export function latkit(): Promise<Gpu> {
   // Gpu.create also loads the runtime, with a bounded wait for both loading and the device.
@@ -14,6 +14,9 @@ export function latkit(): Promise<Gpu> {
     throw error;
   });
 }
+
+/** Starts loading the GPU before a view asks for it, as when a case is chosen. A failure shows where a view asks. */
+export function preload() { latkit().catch(() => {}); }
 
 /**
  * What the pointer, wheel, and fingers do, over latkit's defaults (a drag pans, Shift or the secondary button turns, the wheel

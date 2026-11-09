@@ -95,7 +95,7 @@ export function readMark(value: unknown): MarkDefinition | null {
 export function mergeTheme(base: Exclude<Theme, string>, override: Exclude<Theme, string>): Exclude<Theme, string> {
   function merge(before: unknown, after: unknown): unknown {
     const group = record(after);
-    if (!group || Object.hasOwn(group, 'units') || Object.hasOwn(group, 'px')) return after;
+    if (!group || Object.hasOwn(group, 'units')) return after;
     const result: Record<string, unknown> = { ...record(before) };
     for (const [key, value] of Object.entries(group)) result[key] = merge(result[key], value);
     return result;
@@ -143,7 +143,7 @@ export type MappingTransaction = Omit<ReturnType<typeof mappingDraft>, 'value'>;
 
 /** How the network draws an element: a bus as a marker, a model with two bus ends as an edge between them. */
 export interface Representation {
-  readonly vertices?: Pick<Vertices, 'contains'>;
+  readonly vertices?: Record<string, never>;
   readonly edges?: Pick<Edges, 'ends' | 'joins'>;
 }
 export function representation(target: ElementTarget): Representation | undefined {

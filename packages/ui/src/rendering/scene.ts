@@ -102,7 +102,7 @@ const drawn = new WeakMap<NetworkScene, ReadonlySet<string>>();
 export function tablesOf(input: NetworkScene): ReadonlySet<string> {
   let tables = drawn.get(input);
   if (!tables) drawn.set(input, tables = new Set(input.scene.marks?.flatMap(mark => {
-    const [data, table] = ('vertices' in mark ? mark.vertices : 'edges' in mark ? mark.edges : 'lines' in mark ? mark.lines : 'areas' in mark ? mark.areas : mark.faces) as [string, string];
+    const [data, table] = ('vertices' in mark ? mark.vertices : 'edges' in mark ? mark.edges : 'lines' in mark ? mark.lines : mark.areas) as [string, string];
     return data === dataset ? [table] : [];
   })));
   return tables;

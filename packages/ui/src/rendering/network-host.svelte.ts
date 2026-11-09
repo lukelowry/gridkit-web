@@ -1,4 +1,4 @@
-import { Gpu, type LatkitError, type Source } from 'latkit';
+import type { LatkitError, Source } from 'latkit';
 import type { CaseDocument, ElementRecord } from '@gridkit/library';
 import type { Diagnostic } from '../domain/views.js';
 import { errorMessage } from '../ui/errors.js';
@@ -39,10 +39,6 @@ export class NetworkHost {
   #active = false;
   #disposed = false;
   #generation = 0;
-  #recovering = false;
-  #canvas: HTMLCanvasElement | undefined;
-  // Retry owns a fresh device; the default GPU still belongs to plots and exports.
-  #replacement: Gpu | undefined;
 
   constructor(private source: NetworkSource) {}
 
@@ -99,46 +95,36 @@ export class NetworkHost {
       : error instanceof Error ? reasons(error) : errorMessage(error, 'Rendering is unavailable.');
   }
   activate(active: boolean) { this.#active = active; }
-  /** Drop stalled shader work and reopen on a fresh device. */
-  async retry(canvas: HTMLCanvasElement | undefined) {
-    if (this.#recovering || this.stopped || this.#disposed || !canvas) return;
-    this.#recovering = true;
+  /** Reopens the view: latkit downloads again what failed to load, and moves views off a lost device itself. */
+  retry(canvas: HTMLCanvasElement | undefined) {
+    if (this.stopped || this.#disposed || !canvas) return;
     this.#generation++;
-    this.#canvas = canvas;
     this.#starting = false;
     this.#settling = undefined;
     this.opened?.destroy();
     this.opened = undefined;
-    this.#replacement?.destroy();
-    this.#replacement = undefined;
     this.ready = false;
     this.fault = '';
     this.#failed = false;
     this.diagnostics = [];
-    try {
-      const gpu = await Gpu.create();
-      if (this.#disposed || this.stopped) { gpu.destroy(); return; }
-      this.#replacement = gpu;
-    } catch (error) {
-      if (!this.#disposed) this.#fail(error);
-      return;
-    } finally { this.#recovering = false; }
-    if (this.#active) await this.show(this.#canvas);
+    if (this.#active) void this.show(canvas);
   }
   async show(canvas: HTMLCanvasElement | undefined) {
-    if (canvas) this.#canvas = canvas;
     if (this.opened) { this.#settle(); return; }
-    if (this.#disposed || this.#recovering || this.stopped || this.#starting || !canvas) return;
+    if (this.#disposed || this.stopped || this.#starting || !canvas) return;
     this.#starting = true;
     const generation = this.#generation;
     const current = () => !this.#disposed && !this.stopped && generation === this.#generation;
     let opened: CaseView | undefined;
     try {
-      const gpu = this.#replacement ?? await latkit();
+      await latkit().catch((error: LatkitError) => {
+        throw error?.code === 'unsupported'
+          ? new Error('This browser has no WebGL2. Turn on hardware acceleration in its settings, or use Table.') : error;
+      });
       if (!current()) return;
       opened = new CaseView(this.source.document());
       const pitch = this.source.pitch();
-      await opened.open(canvas, this.source.scene(), { gpu, ...pitch ? { camera: { pitch } } : {}, extra: this.source.extra() });
+      await opened.open(canvas, this.source.scene(), { ...pitch ? { camera: { pitch } } : {}, extra: this.source.extra() });
       if (!current()) { opened.destroy(); return; }
       this.#listen(opened);
       this.source.listen(opened);
@@ -181,6 +167,5 @@ export class NetworkHost {
   destroy() {
     this.#disposed = true;
     this.opened?.destroy();
-    this.#replacement?.destroy();
   }
 }

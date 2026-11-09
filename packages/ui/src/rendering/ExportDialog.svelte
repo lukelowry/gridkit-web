@@ -57,6 +57,7 @@
   const settings = $derived(preferences.value);
   const busy = $derived(!!working);
   const noVideo = $derived(!request.run ? 'Run a simulation to export a video.' : typeof VideoEncoder !== 'function' ? 'This browser cannot encode video.' : '');
+  const locked = $derived(busy || (kind === 'video' && !!noVideo));
   const preset = $derived(settings.exportSize === 'view' || settings.exportSize === 'custom' ? null : pictureSizes[settings.exportSize]);
   const paper = $derived(preset && 'width' in preset ? preset : null);
   const shown = $derived<ExportRequest>({ ...request, plot: settings.exportPlot ? request.plot : undefined });
@@ -181,8 +182,9 @@
 
       </figcaption>
     </figure>
-    <div class="panel" id="{id}-panel" role="tabpanel" aria-labelledby="{id}-{kind}">
-      <fieldset class="settings" disabled={busy || (kind === 'video' && !!noVideo)}>
+    <!-- While its settings are disabled, the panel itself takes focus, so they still scroll by keyboard. -->
+    <div class="panel" id="{id}-panel" role="tabpanel" aria-labelledby="{id}-{kind}" tabindex={locked ? 0 : undefined}>
+      <fieldset class="settings" disabled={locked}>
         {#if kind === 'image'}
           {@render row('exportFormat')}
           {@render row('exportQuality', 'Quality')}

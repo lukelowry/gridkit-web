@@ -2,6 +2,7 @@
   import { onDestroy } from 'svelte';
   import { watchNotice } from '../ui/toasts.svelte.js';
   import { errorMessage } from '../ui/errors.js';
+  import { preload } from '../ui/latkit.js';
   import type { Connection } from '../services/connection.svelte.js';
   import Dialog from '../ui/Dialog.svelte';
   import Icon from '../ui/Icon.svelte';
@@ -73,6 +74,8 @@
     if (opening) return;
     if (entry.folder) { show(entry.path); return; }
     opening = entry.path; failed = '';
+    // The network shows next: its GPU loads while the case downloads.
+    preload();
     try {
       const file = await library.value!.open(entry, request.signal);
       if (request.signal.aborted) return;

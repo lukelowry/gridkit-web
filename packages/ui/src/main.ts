@@ -1,3 +1,4 @@
+import './zod.js'; // before any module builds a schema
 import { connect as library } from '@gridkit/library/http';
 import type { Config } from './config.js';
 import { mountUi } from './mount.js';

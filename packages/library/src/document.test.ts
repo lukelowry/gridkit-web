@@ -30,13 +30,13 @@ it('freezes nested imported data even when its parent was already shallowly froz
 });
 
 it('round trips metadata, native fields, opaque data, unresolved ports, and absent collections', () => {
-  const value = input(), placement = { network: [20, 40], diagram: [1, 2] };
-  const document = new CaseDocument({ ...value, buses: [{ ...value.buses[0]!, $ui: { version: 1, id: 'north', placement } }, value.buses[1]!] });
+  const value = input(), placement = { network: [20, 40], unknown: [1, 2] };
+  const document = new CaseDocument({ ...value, buses: [{ ...value.buses[0]!, $ui: { stamp: 1, id: 'north', placement } }, value.buses[1]!] });
   const bus = document.find('buses', 1)!;
-  // Obsolete placement metadata is dropped.
+  // Placement the UI does not use is dropped.
   expect(document.get(bus)!.placement).toEqual({ network: [20, 40], geographic: [-90.1, 35.1] });
   const saved = document.export();
-  // An earlier UI's version stamp is read past and not written.
+  // Metadata the UI does not read is not written.
   expect(saved.buses[0]!.$ui).toEqual({ id: 'north', placement: { network: [20, 40] } });
   const restored = new CaseDocument(parseCase(serializeCase(saved)));
   expect(restored.find('buses', 1)).toEqual(bus);

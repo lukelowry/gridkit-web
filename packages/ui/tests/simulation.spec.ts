@@ -65,7 +65,7 @@ test('solver fields and JSON take effect immediately, persist across navigation 
 });
 
 test('context simulations use current settings without confirmations and preserve the running snapshot', async ({ page, browserName }) => {
-  test.skip(browserName === 'webkit', 'This runner cannot initialize GPU-backed result ingestion.');
+  test.skip(browserName === 'webkit', "Playwright's WebKit reports a form's Blob parts empty, so the study sent cannot be read.");
   const submitted = await completedRun(page), studies: { tmax: number }[] = [], prompts: string[] = [];
   page.on('dialog', async dialog => { prompts.push(dialog.message()); await dialog.dismiss(); });
   page.on('request', request => {
@@ -92,8 +92,7 @@ test('context simulations use current settings without confirmations and preserv
   expect(prompts).toEqual([]);
 });
 
-test('Run becomes Stop at a fixed width and cancels the run', async ({ page, browserName }) => {
-  test.skip(browserName === 'webkit', 'This runner cannot initialize GPU-backed result ingestion.');
+test('Run becomes Stop at a fixed width and cancels the run', async ({ page }) => {
   const submitted = await completedRun(page);
   let cancelled = false;
   await page.route(url => url.pathname === '/api/solver/runs/harden-test' || url.pathname === '/api/solver/runs/harden-test/cancel', route => {
@@ -150,8 +149,7 @@ test('solver connection recovery uses shared notifications and keeps menu items 
   expect(await menu.getByRole('menuitem', { name: 'Reset solver settings', exact: true }).boundingBox()).toEqual(reset);
 });
 
-test('a new run clears the previous run failure even when started from the header', async ({ page, browserName }) => {
-  test.skip(browserName === 'webkit', 'This runner has no WebGPU adapter to start a simulation.');
+test('a new run clears the previous run failure even when started from the header', async ({ page }) => {
   await completedRun(page);
   let failed = false;
   await page.route('**/api/solver/runs/harden-test?*', route => {

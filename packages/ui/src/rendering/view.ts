@@ -1,4 +1,4 @@
-import { Data, Patch, View, type Camera, type Gpu, type Source } from 'latkit';
+import { Data, Patch, View, type Camera, type Source } from 'latkit';
 import type { CaseDocument } from '@gridkit/library';
 import type { Diagnostic } from '../domain/views.js';
 import { dataset, tableColumns, tables, writeRows } from './data.js';
@@ -25,8 +25,8 @@ export class CaseView {
   }
 
   /** Opens the view on `canvas` with `input`, which it compiles against the case data and `extra` datasets. */
-  async open(canvas: HTMLCanvasElement | null, input: NetworkScene, { camera, extra = [], signal, gpu }: { camera?: Partial<Camera>; extra?: readonly Source[]; signal?: AbortSignal; gpu?: Gpu } = {}) {
-    this.#view = await View.create(canvas, input.scene, { sources: [this.data, ...extra], ...camera && { camera }, ...signal && { signal }, ...gpu && { gpu } });
+  async open(canvas: HTMLCanvasElement | null, input: NetworkScene, { camera, extra = [], signal }: { camera?: Partial<Camera>; extra?: readonly Source[]; signal?: AbortSignal } = {}) {
+    this.#view = await View.create(canvas, input.scene, { sources: [this.data, ...extra], ...camera && { camera }, ...signal && { signal } });
     this.#extra = extra; this.#input = input; this.#json = JSON.stringify(input.scene);
   }
 
