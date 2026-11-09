@@ -497,12 +497,13 @@ test('case issues open read-only properties and preserve unfinished downloads', 
 });
 
 test('a case opened while latkit still loads draws once it has', async ({ page }) => {
-  const failures: string[] = [];
-  page.on('pageerror', error => failures.push(error.message));
   let release!: () => void;
   const held = new Promise<void>(resolve => { release = resolve; });
   await page.route('**/*.wasm', async route => { await held; await route.continue(); });
   await page.reload();
+  // Errors on the reloaded page only: WebKit reports the first page's requests that the reload cancels as access control failures.
+  const failures: string[] = [];
+  page.on('pageerror', error => failures.push(error.message));
   await openEmptyCase(page);
   await navigate(page, 'Network');
   release();
