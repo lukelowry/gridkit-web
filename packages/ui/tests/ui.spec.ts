@@ -98,7 +98,8 @@ test('empty cases can be inspected without authoring controls', async ({ page })
   await expect(page.getByRole('grid', { name: 'All classes', exact: true })).toBeVisible();
 });
 
-test('case details and keyboard commands preserve the downloaded case', async ({ page }) => {
+test('case details and keyboard commands preserve the downloaded case', async ({ page, browserName }) => {
+  test.skip(browserName === 'webkit', "Playwright's WebKit goes back a page on Backspace.");
   await openCase(page);
   await showCaseInfo(page);
   const info = page.getByRole('dialog', { name: 'Case information', exact: true });
@@ -153,19 +154,16 @@ test('renderer selection and view switching', async ({ page }) => {
   await navigate(page, 'Network');
   await expect(page.getByLabel('Network view')).toHaveAttribute('data-ready', 'true');
   // A pixel-clamped unit radius must not inflate the first geographic fit to several degrees.
-  const pixels = await page.getByLabel('Network view').screenshot();
-  const span = await page.evaluate(async encoded => {
-    const image = await createImageBitmap(new Blob([Uint8Array.from(atob(encoded), char => char.charCodeAt(0))], { type: 'image/png' }));
-    const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
-    const context = canvas.getContext('2d')!; context.drawImage(image, 0, 0); image.close();
-    const rgba = context.getImageData(0, 0, canvas.width, canvas.height).data;
-    let first = canvas.height, last = 0;
-    for (let y = 0; y < canvas.height; y++) for (let x = 0; x < canvas.width; x++) {
-      const offset = (y * canvas.width + x) * 4, r = rgba[offset]!, g = rgba[offset + 1]!, b = rgba[offset + 2]!;
+  const span = await page.getByLabel('Network view').evaluate((canvas: HTMLCanvasElement) => {
+    // latkit copies each frame into the canvas's 2D context.
+    const { width, height } = canvas, rgba = canvas.getContext('2d')!.getImageData(0, 0, width, height).data;
+    let first = height, last = 0;
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+      const offset = (y * width + x) * 4, r = rgba[offset]!, g = rgba[offset + 1]!, b = rgba[offset + 2]!;
       if (g > r * 1.2 && b > r * 1.2 && Math.abs(g - b) < 30) { first = Math.min(first, y); last = Math.max(last, y); }
     }
-    return (last - first) / canvas.height;
-  }, pixels.toString('base64'));
+    return (last - first) / height;
+  });
   expect(span).toBeGreaterThan(0.4);
   await expect(page.getByRole('button', { name: 'Flat', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('button', { name: 'Globe', exact: true }).click();
@@ -270,11 +268,19 @@ test('preferences draft, apply, reset, and persist', async ({ page }) => {
 });
 
 test('rendering failure leaves table and files usable', async ({ page }) => {
-  await page.addInitScript(() => Object.defineProperty(navigator, 'gpu', { value: undefined }));
+  // No WebGL2, as with hardware acceleration off or a blocked GPU.
+  await page.addInitScript(() => {
+    type Canvas = { prototype: { getContext(id: string, ...options: unknown[]): unknown } };
+    const canvases: Canvas[] = typeof OffscreenCanvas === 'function' ? [HTMLCanvasElement, OffscreenCanvas] : [HTMLCanvasElement];
+    for (const { prototype } of canvases) {
+      const getContext = prototype.getContext;
+      prototype.getContext = function (id, ...options) { return id === 'webgl2' ? null : getContext.call(this, id, ...options); };
+    }
+  });
   await page.reload();
   await openCase(page);
   await navigate(page, 'Network');
-  await expect(page.getByRole('alert')).toContainText('Rendering is unavailable.');
+  await expect(page.getByRole('alert')).toContainText('Rendering is unavailable. This browser has no WebGL2.');
   await navigate(page, 'Table');
   await expect(page.getByRole('grid', { name: 'Bus' })).toBeVisible();
   const downloading = page.waitForEvent('download');
@@ -307,54 +313,6 @@ test('a stalled graphics download reports a failure and can be retried', async (
   } finally { release(); }
 });
 
-test('retry replaces a GPU whose shader compilation never finishes', async ({ page }) => {
-  await page.addInitScript(() => {
-    const timeout = AbortSignal.timeout.bind(AbortSignal);
-    AbortSignal.timeout = milliseconds => timeout(Math.min(milliseconds, 3000));
-    type Device = { createRenderPipelineAsync: () => Promise<unknown>; createComputePipelineAsync: () => Promise<unknown> };
-    const adapter = (globalThis as unknown as { GPUAdapter: { prototype: { requestDevice(...args: unknown[]): Promise<Device> } } }).GPUAdapter.prototype;
-    const request = adapter.requestDevice;
-    let devices = 0;
-    adapter.requestDevice = async function (...args: unknown[]) {
-      const device = await request.apply(this, args);
-      if (++devices === 1) {
-        // A compiler stuck on this device also stalls every subsequent view using it.
-        device.createRenderPipelineAsync = () => new Promise(() => {});
-        device.createComputePipelineAsync = () => new Promise(() => {});
-      }
-      return device;
-    };
-  });
-  await page.reload();
-  await page.locator('input[type=file]').setInputFiles({ name: 'example.case.json', mimeType: 'application/json',
-    buffer: Buffer.from(JSON.stringify(fixture)) });
-  await expect(page.getByRole('alert')).toContainText('Rendering is unavailable.');
-  await page.getByRole('button', { name: 'Try rendering again', exact: true }).click();
-  await expect(page.getByLabel('Network view')).toHaveAttribute('data-ready', 'true', { timeout: 10000 });
-  // Read actual drawn pixels, not just the application's readiness flag.
-  for (let visit = 0; visit < 2; visit++) {
-    await navigate(page, 'Table');
-    await navigate(page, 'Network');
-    await expect.poll(async () => {
-      // WebGPU discards its drawing buffer after presentation. Inspect the composited screenshot.
-      const png = await page.getByLabel('Network view').screenshot();
-      return page.evaluate(async base64 => {
-        const source = new Image();
-        source.src = `data:image/png;base64,${base64}`;
-        await source.decode();
-        const sample = document.createElement('canvas');
-        sample.width = sample.height = 128;
-        const context = sample.getContext('2d')!;
-        context.drawImage(source, 0, 0, 128, 128);
-        const pixels = context.getImageData(0, 0, 128, 128).data, colors = new Set<string>();
-        for (let at = 0; at < pixels.length; at += 4)
-          if (pixels[at + 3]) colors.add(`${pixels[at]},${pixels[at + 1]},${pixels[at + 2]}`);
-        return colors.size;
-      }, png.toString('base64'));
-    }).toBeGreaterThan(8);
-  }
-});
-
 test('a phone-width layout keeps every control in view without sideways scrolling', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByRole('region', { name: 'Welcome' })).toBeVisible();
@@ -380,7 +338,8 @@ test('a phone-width layout keeps every control in view without sideways scrollin
   await expect(page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true })).toBeInViewport();
 });
 
-test('context menus select what they open over and run its commands', async ({ page }) => {
+test('context menus select what they open over and run its commands', async ({ page, browserName }) => {
+  test.skip(browserName === 'webkit', 'An iPad has no right-click.');
   const failures: string[] = [];
   page.on('pageerror', error => failures.push(error.message));
   await page.setViewportSize({ width: 1280, height: 844 });

@@ -91,14 +91,9 @@ it('releases the last GPU while detached and resumes without including time spen
   expect(playhead.time).toBe(.05);
   frame(6050); expect(playhead.time).toBe(.1);
 });
-it('moves the clock subscription to a replacement GPU when its owner is removed', () => {
-  const first = setup(), second = setup();
-  const detach = first.playhead.attach(first.view());
-  first.playhead.attach(second.view()); first.playhead.play();
-  expect(first.listeners.size).toBe(1); expect(second.listeners.size).toBe(0);
+it('keeps its frame listener while another view still holds the time', () => {
+  const { playhead, view, gpu, listeners } = setup();
+  const detach = playhead.attach(view()); playhead.attach(view()); playhead.play();
   detach();
-  expect(first.listeners.size).toBe(0); expect(second.listeners.size).toBe(1);
-  first.frame(0); first.frame(50); expect(first.playhead.time).toBe(0);
-  second.frame(100); second.frame(150); expect(first.playhead.time).toBe(.05);
-  first.playhead.pause(); expect(second.listeners.size).toBe(0);
+  expect(listeners.size).toBe(1); expect(gpu.on).toHaveBeenCalledTimes(1);
 });

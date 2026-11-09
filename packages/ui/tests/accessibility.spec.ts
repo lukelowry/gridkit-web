@@ -66,8 +66,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await accessible(page, 'Solver validation');
   });
 
-  test('accessible results and export in ' + colorScheme, async ({ page, browserName }) => {
-    test.skip(browserName === 'webkit', 'This runner has no WebGPU adapter for result ingestion and export.');
+  test('accessible results and export in ' + colorScheme, async ({ page }) => {
     test.setTimeout(120_000);
     await completedRun(page);
     await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' });

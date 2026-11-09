@@ -4,10 +4,9 @@ import type { NetworkScene } from './scene.js';
 import { undocked, NetworkHost } from './network-host.svelte.js';
 
 const mocks = vi.hoisted(() => ({
-  load: vi.fn(), recover: vi.fn(), done: vi.fn(), fit: vi.fn(), open: vi.fn(), destroy: vi.fn(), created: vi.fn(),
+  load: vi.fn(), done: vi.fn(), fit: vi.fn(), open: vi.fn(), destroy: vi.fn(), created: vi.fn(),
 }));
 vi.mock('../ui/latkit.js', () => ({ latkit: mocks.load }));
-vi.mock('latkit', () => ({ Gpu: { create: mocks.recover } }));
 vi.mock('./data.js', () => ({ dataset: 'case' }));
 vi.mock('./scene.js', () => ({ spaceOf: () => 'plane', tablesOf: () => new Set(['Bus']) }));
 vi.mock('./view.js', () => ({ CaseView: class {
@@ -31,7 +30,6 @@ const makeHost = () => new NetworkHost({
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.load.mockReset().mockResolvedValue({});
-  mocks.recover.mockReset().mockResolvedValue({ destroy: vi.fn() });
   mocks.open.mockReset().mockResolvedValue(undefined);
   mocks.fit.mockReset().mockResolvedValue({});
   mocks.done.mockReset().mockResolvedValue(undefined);
@@ -51,7 +49,6 @@ it('reports a first-frame timeout instead of retrying indefinitely; retry rebuil
   await vi.waitFor(() => expect(host.ready).toBe(true));
   expect(mocks.created).toHaveBeenCalledTimes(2);
   expect(mocks.destroy).toHaveBeenCalledTimes(1);
-  expect(mocks.recover).toHaveBeenCalledTimes(1);
   expect(host.fault).toBe('');
   host.destroy();
 });
@@ -65,6 +62,15 @@ it('says why latkit could not load', async () => {
   host.destroy();
 });
 
+it('says what to change when the browser has no WebGL2', async () => {
+  mocks.load.mockRejectedValueOnce(Object.assign(new Error('WebGL2 is unavailable'), { code: 'unsupported' }));
+  const host = makeHost();
+  host.activate(true);
+  await host.show(canvas);
+  expect(host.fault).toBe('This browser has no WebGL2. Turn on hardware acceleration in its settings, or use Table.');
+  host.destroy();
+});
+
 it('surfaces a non-timeout first-frame failure', async () => {
   mocks.done.mockRejectedValueOnce(new Error('GPU pipeline failed'));
   const host = makeHost();
@@ -75,55 +81,15 @@ it('surfaces a non-timeout first-frame failure', async () => {
   host.destroy();
 });
 
-it('reuses the network and its replacement device across hiding and frees it on close', async () => {
-  const gpu = { destroy: vi.fn() };
-  mocks.recover.mockResolvedValue(gpu);
-  const host = makeHost();
-  host.activate(true);
-  await host.show(canvas);
-  await host.retry(canvas);
-  for (let count = 0; count < 100; count++) {
-    host.activate(false); host.activate(true); await host.show(canvas);
-  }
-  expect(mocks.created).toHaveBeenCalledTimes(2);
-  expect(mocks.open.mock.calls.at(-1)![2].gpu).toBe(gpu);
-  host.destroy();
-  expect(gpu.destroy).toHaveBeenCalledTimes(1);
-});
-
-it('frees a replacement device that arrives after the case closes', async () => {
-  const gpu = { destroy: vi.fn() };
-  let resolve!: (value: typeof gpu) => void;
-  mocks.recover.mockReturnValue(new Promise(done => { resolve = done; }));
-  const host = makeHost();
-  host.activate(true);
-  const retry = host.retry(canvas);
-  host.destroy();
-  resolve(gpu);
-  await retry;
-  expect(gpu.destroy).toHaveBeenCalledTimes(1);
-  expect(mocks.created).not.toHaveBeenCalled();
-});
-
-it('reports replacement device failure and allows another retry', async () => {
-  mocks.recover.mockRejectedValueOnce(new Error('device unavailable'));
-  const host = makeHost();
-  host.activate(true);
-  await host.retry(canvas);
-  expect(host.fault).toBe('device unavailable');
-  await host.retry(canvas);
-  await vi.waitFor(() => expect(host.ready).toBe(true));
-  host.destroy();
-});
-
-it('ignores an old view that finishes opening after GPU replacement', async () => {
+it('ignores an old view that finishes opening after a retry', async () => {
   let resolve!: () => void;
   mocks.open.mockReturnValueOnce(new Promise<void>(done => { resolve = done; }));
   const host = makeHost();
   host.activate(true);
   const opening = host.show(canvas);
   await vi.waitFor(() => expect(mocks.open).toHaveBeenCalledTimes(1));
-  await host.retry(canvas);
+  host.retry(canvas);
+  await vi.waitFor(() => expect(host.ready).toBe(true));
   const replacement = host.opened;
   resolve();
   await opening;

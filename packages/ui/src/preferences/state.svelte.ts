@@ -11,13 +11,9 @@ const storageKey = 'gridkit.preferences';
 function parse(text: string) {
   let stored: Record<string, unknown> = {};
   try { stored = record(JSON.parse(text)) ?? {}; } catch { /* Use defaults. */ }
-  // Fold supported interaction overrides into the single settings set.
-  const network = record(record(stored.overrides)?.network) ?? {};
   const value = Object.fromEntries(preferenceKeys.map(key => {
-    const field = preferenceFields[key], base = field.schema.safeParse(stored[key]);
-    const override = field.category === 'interaction' && Object.hasOwn(network, key)
-      ? field.schema.safeParse(network[key]) : undefined;
-    return [key, override?.success ? override.data : base.success ? base.data : defaults[key]];
+    const read = preferenceFields[key].schema.safeParse(stored[key]);
+    return [key, read.success ? read.data : defaults[key]];
   })) as Preferences;
   function records<T>(schema: z.ZodType<T>, input: unknown): Record<string, T> {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return {};

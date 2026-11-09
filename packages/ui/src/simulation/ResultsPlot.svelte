@@ -10,8 +10,7 @@
   import type { Playhead } from './playhead.svelte.js';
   import { measureUnit } from '../domain/measure.js';
   import type { PreferencesState } from '../preferences/state.svelte.js';
-  import { latkit } from '../ui/latkit.js';
-  import { gesturesOf } from '../ui/latkit.js';
+  import { gesturesOf, latkit } from '../ui/latkit.js';
   import { colorHex } from '../ui/color.js';
   import { errorMessage } from '../ui/errors.js';
 

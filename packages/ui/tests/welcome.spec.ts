@@ -42,7 +42,7 @@ test('welcome defers graphics, results workers and optional panels until needed'
   await page.goto('/');
   await page.waitForFunction(() => performance.getEntriesByName('gridkit:services').length > 0);
   await expect(page.getByRole('region', { name: 'Welcome', exact: true })).toBeVisible();
-  expect(requests.filter(path => /\.wasm$|results\.worker|PreferencesDialog-|ExportDialog-|SolverSettings-|ResultsDock-|NetworkView-/.test(path))).toEqual([]);
+  expect(requests.filter(path => /\.wasm$|\.bin$|results\.worker|PreferencesDialog-|ExportDialog-|SolverSettings-|ResultsDock-|NetworkView-/.test(path))).toEqual([]);
   await page.getByLabel('Open case file', { exact: true }).setInputFiles({ name: 'example.case.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(fixture)) });
   await page.getByRole('button', { name: 'Solver', exact: true }).click();
   await expect(page.getByLabel('Duration', { exact: true })).toBeVisible();

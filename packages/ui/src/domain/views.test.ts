@@ -34,15 +34,15 @@ it('stores and exports the same native mapping values through both case and brow
 it('inherits nested theme groups and replaces explicit length values atomically', () => {
   expect(mergeTheme({ vertex: { color: '#123456', radius: 5 }, text: { color: '#112233', size: 12 },
     flow: { spacing: { units: 10 }, length: { units: 4 } } },
-    { vertex: { radius: 7 }, text: { size: 14 }, flow: { spacing: { px: 20 }, length: { px: 10 } } }))
+    { vertex: { radius: 7 }, text: { size: 14 }, flow: { spacing: 20, length: { units: 2 } } }))
     .toEqual({ vertex: { color: '#123456', radius: 7 }, text: { color: '#112233', size: 14 },
-      flow: { spacing: { px: 20 }, length: { px: 10 } } });
+      flow: { spacing: 20, length: { units: 2 } } });
 });
 
 it('drops obsolete views on import and export while preserving Network options and case data', () => {
   const network = { futureOption: { opaque: true }, marks: [] };
   const document = new CaseDocument(parseCase(JSON.stringify({ ...fixture,
-    $ui: { author: 'kept', views: { network, diagram: { marks: [] }, unsupported: {} } },
+    $ui: { author: 'kept', views: { network, unsupported: {} } },
   })));
   expect(document.views).toEqual({ network });
   expect(Object.isFrozen(document.views)).toBe(true);

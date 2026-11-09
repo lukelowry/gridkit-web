@@ -4,6 +4,7 @@ import { entriesOf, entryOf, sameReference } from '../domain/entries.js';
 import { representation } from '../domain/views.js';
 import { errorMessage } from '../ui/errors.js';
 import { fileName, save } from '../ui/files.js';
+import { preload } from '../ui/latkit.js';
 import { isGeographic } from '../rendering/data.js';
 import type { ExportRequest } from '../rendering/export.js';
 import type { Simulation } from '../simulation/simulation.svelte.js';
@@ -134,6 +135,8 @@ export class Workspace {
     } catch (cause) { notify(errorMessage(cause)); }
   };
   openFile = async (file: File) => {
+    // The network shows next: its GPU loads while the case is read.
+    preload();
     try {
       if (!await this.caseSession.open(file)) return;
       this.#reset(this.current.document.size ? 'network' : 'table');

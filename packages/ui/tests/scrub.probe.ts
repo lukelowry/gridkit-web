@@ -13,8 +13,7 @@ const failures: string[] = [];
 page.on('pageerror', error => failures.push(error.message));
 await page.goto(address);
 await page.locator('input[type=file]').first().setInputFiles(fileURLToPath(new URL('../../../library/WECC240.case.json', import.meta.url)));
-await page.getByRole('button', { name: 'Preferences', exact: true }).click();
-await page.getByRole('dialog', { name: 'Preferences', exact: true }).getByRole('button', { name: 'Solver', exact: true }).click();
+await page.getByRole('button', { name: 'Solver', exact: true }).click();
 await page.getByLabel('Import solver file', { exact: true }).setInputFiles({ name: 'dense.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(
   { tmax: 10, dt_monitor: interval, events: [{ type: 'fault_on', time: 1, bus: 4005, R: 0.001, X: 0.02 }, { type: 'fault_off', time: 1.15, bus: 4005 }] })) });
 const run = page.getByRole('button', { name: 'Run simulation', exact: true });
@@ -23,6 +22,8 @@ while (!(await run.isEnabled())) await sleep(100);
 await run.click();
 const results = page.getByRole('region', { name: 'Simulation', exact: true });
 await results.getByRole('button', { name: 'Play', exact: true }).waitFor({ timeout: 60_000 });
+// Scrub with the network showing: every view follows the time.
+await page.getByRole('button', { name: 'Network', exact: true }).click();
 await sleep(1500);
 
 let reads = 0;
