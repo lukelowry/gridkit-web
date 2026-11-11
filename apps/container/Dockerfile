@@ -12,7 +12,7 @@ COPY packages packages
 COPY apps/container apps/container
 RUN pnpm -F @gridkit/ui build && node apps/container/headers.ts > headers.caddy
 
-FROM caddy:2.11.7-alpine
+FROM caddy:2.11.9-alpine
 RUN setcap -r /usr/bin/caddy \
     && addgroup -g 10001 app && adduser -D -u 10001 -G app app
 COPY apps/container/Caddyfile /etc/caddy/Caddyfile
