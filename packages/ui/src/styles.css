@@ -70,6 +70,8 @@
   --focus-width: 2px;
   --focus-ring: var(--focus-width) solid var(--color-focus);
   --tracking-md: 0.04em;
+  /* How much of a control shows while it cannot be used. */
+  --opacity-disabled: 0.4;
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
@@ -104,7 +106,8 @@ button, input, textarea, select { color: inherit; }
 button { cursor: pointer; font: var(--type-label); }
 /* Touch gestures on controls activate or scroll; their labels are not document text. */
 button, [role="button"] { -webkit-user-select: none; user-select: none; }
-button:disabled { cursor: default; opacity: 0.4; }
+/* Every control that cannot be used now looks it, whichever element it is. */
+:is(button, input, select, textarea):disabled { cursor: default; opacity: var(--opacity-disabled); }
 button { min-height: var(--control-height); border: 1px solid transparent; border-radius: var(--radius-md); padding: 4px 12px; background: transparent; }
 button:hover:not(:disabled), summary:hover { background: var(--color-row-hover); }
 button:active:not(:disabled) { background: var(--color-selected); }
@@ -131,13 +134,15 @@ select > button { display: none; }
   /* An explicit selected label can shrink without losing the native picker glyph. */
   select > button { display: contents; }
   select selectedcontent { display: block; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* The glyph `.c-select::after` draws. They cannot share a rule: a selector list is dropped whole where this one is unknown. */
   select::picker-icon {
-    content: ''; flex: none; inline-size: 8px; block-size: 8px; margin-inline-start: auto;
-    border: solid currentColor; border-width: 0 1.5px 1.5px 0;
-    color: var(--color-text-3); rotate: 45deg; translate: 0 -2px;
+    content: ''; flex: none; inline-size: 6px; block-size: 6px; margin-inline: auto 2px;
+    border: solid var(--color-text-3); border-width: 0 1.5px 1.5px 0; rotate: 45deg; translate: 0 -2px;
   }
+  /* As wide as its longest choice, and never narrower than its select: beside a narrow select at the viewport's edge it opens
+     toward the room there is, rather than wrapping its choices into the sliver beneath it. */
   select::picker(select) {
-    max-inline-size: calc(100dvw - 16px); max-block-size: min(24rem, calc(100dvh - 16px));
+    inline-size: max-content; max-inline-size: calc(100dvw - 16px); max-block-size: min(24rem, calc(100dvh - 16px));
     margin-block: var(--spacing-xs); padding: var(--spacing-xs); overflow: auto; overscroll-behavior: contain;
     border: 1px solid var(--color-border); border-radius: var(--radius-lg);
     background: var(--color-surface-1); color: var(--color-text-1); box-shadow: var(--shadow-overlay);
@@ -172,7 +177,10 @@ select > button { display: none; }
 .c-options .c-action:not(:disabled):not([aria-disabled="true"]):not(:has(input:disabled)):hover { background: var(--color-row-hover); }
 .c-options label.c-action { cursor: pointer; }
 .c-options label:has(input:checked) { background: var(--color-selected); color: var(--color-primary-text); border-color: var(--color-selection-border); }
-.c-options .c-action[aria-disabled="true"], .c-options label:has(input:disabled) { opacity: 0.4; cursor: default; }
+/* A label dims with the control it holds, once. A field's frame dims with its input, and its unit stays readable. */
+.c-options .c-action[aria-disabled="true"], .c-options label:has(input:disabled) { opacity: var(--opacity-disabled); cursor: default; }
+.c-options label > input:disabled { opacity: 1; }
+.c-field:has(input:disabled) { border-color: color-mix(in oklch, var(--color-control-border) calc(var(--opacity-disabled) * 100%), transparent); }
 .c-options label > input { margin: 0; }
 .c-icon-btn { display: inline-grid; place-items: center; width: var(--control-height); height: var(--control-height); padding: 0; flex-shrink: 0; }
 .c-icon-btn svg { display: block; }
@@ -192,9 +200,13 @@ select > button { display: none; }
 .c-field > svg, .c-field__suffix { color: var(--color-text-3); flex: none; }
 .c-field__suffix { font: var(--type-caption); }
 input::placeholder, textarea::placeholder { color: var(--color-text-3); opacity: 1; }
+/* A button that opens a picker reads as a select, down to the glyph a select ends in (`select::picker-icon`). */
 .c-select { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; text-align: left; }
 .c-select > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.c-select > svg { flex: none; width: 12px; height: 12px; }
+.c-select::after {
+  content: ''; flex: none; inline-size: 6px; block-size: 6px; margin-inline: auto 2px;
+  border: solid var(--color-text-3); border-width: 0 1.5px 1.5px 0; rotate: 45deg; translate: 0 -2px;
+}
 .c-color-field { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .c-color-field > input:not([type="color"]) { flex: 1; }
 .view-area { min-height: 0; min-width: 0; flex: 1; position: relative; }
@@ -273,5 +285,6 @@ dd { margin: 0; overflow-wrap: anywhere; }
 
 :root[data-contrast="high"] { --color-border: var(--color-text-3); --color-control-border: var(--color-text-2); --focus-width: 3px; }
 
-/* Case values remain selectable and readable without suggesting an editable field. */
+/* Case values remain selectable and readable without suggesting an editable field; one too long for its row says so. */
 input[readonly], textarea[readonly] { border-color: transparent; background: transparent; }
+input[readonly] { text-overflow: ellipsis; }

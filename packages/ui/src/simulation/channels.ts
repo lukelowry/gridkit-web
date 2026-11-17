@@ -1,8 +1,7 @@
 import type { Channel } from '@gridkit/library/gridkit';
 import type { ElementRef } from '@gridkit/library';
 
-/** All-series plots stay bounded; larger quantities are inspected through selected and pinned elements. */
-export const allSeriesLimit = 512;
+/** How many elements a plot keeps pinned for comparison. */
 export const pinnedSeriesLimit = 64;
 
 /** What a plot shows: the channels of one output of one scope, in one unit. */

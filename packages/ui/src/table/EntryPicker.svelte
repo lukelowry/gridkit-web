@@ -3,7 +3,6 @@
   import Popover from '../ui/Popover.svelte';
   import PickerPanel from '../ui/PickerPanel.svelte';
   import VirtualTable from '../ui/VirtualTable.svelte';
-  import Icon from '../ui/Icon.svelte';
 
   let { choices, value = $bindable(''), id, label, collectionLabel, clearLabel, unresolved,
     invalid = false, describedby, onchange }: {
@@ -22,7 +21,6 @@
       aria-invalid={invalid || undefined} aria-describedby={describedby}
       onkeydown={event => { if (event.key === 'ArrowDown') { event.preventDefault(); document.getElementById(popup)?.showPopover(); } }}>
       <span>{selected ? `${selected.label}${selected.name ? ` — ${selected.name}` : ''}` : (unresolved ?? value) ? `Unresolved (${unresolved ?? value})` : 'Choose…'}</span>
-      <Icon name="chevron" />
     </button>
   {/snippet}
   {#snippet children(close)}

@@ -91,7 +91,7 @@ function inbox<T>(signal: AbortSignal) {
   };
 }
 
-async function setup(fixture: unknown, focused = false) {
+async function setup(fixture: unknown) {
   vi.stubGlobal('Worker', WorkerStub);
   vi.stubGlobal('requestAnimationFrame', () => 1); vi.stubGlobal('cancelAnimationFrame', () => {});
   let now = 0, value = 1, state: RunState = 'running';
@@ -143,7 +143,7 @@ async function setup(fixture: unknown, focused = false) {
   const study = { ...defaultStudy(), tmax: 20 };
   const runs = [simulation.start(document, 0, study)];
   cleanup = async () => { simulation.close(); await Promise.all(runs); };
-  await vi.waitFor(() => expect(focused ? simulation.run!.quantity : simulation.run!.plot).toBeDefined());
+  await vi.waitFor(() => expect(simulation.run!.plot).toBeDefined());
   return {
     simulation, study, rows, summaries, rowsCalls: () => rows.mock.calls.length,
     advance(time: number, next: number, nextValue = value, nextState: RunUpdate['state'] & RunState = 'running') {
@@ -285,24 +285,25 @@ for (const fixture of [ieee39, wecc240]) {
   });
 }
 
-it('focuses large quantities explicitly, pins comparisons, and keeps network playback independent', async () => {
+it('plots every series of a large quantity, narrows to selected and pinned elements when asked, and keeps network playback independent', async () => {
   const value = { ...ieee39, buses: [...ieee39.buses, ...Array.from({ length: 513 - ieee39.buses.length }, (_, i) => ({ ...ieee39.buses[0]!, number: 10_000 + i }))] };
-  const { simulation, summaries } = await setup(value, true), run = simulation.run!;
-  expect(run.plotMode).toBe('focused');
-  expect(run.plot).toBeUndefined();
-  expect(summaries).toHaveLength(0);
+  const { simulation } = await setup(value), run = simulation.run!;
   const [first, second] = run.quantity!.channels;
+  expect(run.plotMode).toBe('all');
+  expect(run.plot!.quantity.channels).toHaveLength(513);
+  run.setPlotMode('focused');
+  expect(run.plot).toBeUndefined();
   run.focusPlot(first!.element);
   await vi.waitFor(() => expect(run.plot?.quantity.channels).toEqual([first]));
   run.pinPlot(first!.element);
   run.focusPlot(second!.element);
   await vi.waitFor(() => expect(run.plot?.quantity.channels).toEqual([first, second]));
-  run.setPlotMode('all');
-  expect(run.plotMode).toBe('focused');
   run.unpinPlot(first!.element);
   await vi.waitFor(() => expect(run.plot?.quantity.channels).toEqual([second]));
   run.focusPlot(null);
   expect(run.plot).toBeUndefined();
+  run.setPlotMode('all');
+  await vi.waitFor(() => expect(run.plot?.quantity.channels).toHaveLength(513));
   await vi.waitFor(() => expect(run.data!.get('Bus', first!.element.id, 'Vm', { at: 1 })).toBe(1));
   run.seek(0.5);
   expect(run.playhead.time).toBe(0.5);

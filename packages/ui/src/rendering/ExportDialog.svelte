@@ -255,7 +255,6 @@
   .expanded-preview img { width: 100%; height: 100%; min-height: 0; object-fit: contain; }
   .panel { min-height: 0; overflow: auto; overscroll-behavior: contain; }
   .settings { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); align-items: center; gap: 8px 12px; padding: 16px; }
-  .settings:disabled { opacity: 0.6; }
   .settings > label { color: var(--color-text-2); font: var(--type-compact); }
   .controls { display: flex; align-items: center; gap: 6px; min-width: 0; }
   .controls :global(select), .controls :global(.c-field) { flex: 1; min-width: 0; width: 0; }
@@ -263,7 +262,8 @@
   .controls :global(select:last-of-type:not(:first-of-type)) { flex: 0 0 4rem; }
   .joiner { color: var(--color-text-3); font: var(--type-compact); }
   .summary { color: var(--color-text-2); font: var(--type-caption); font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .export-action { display: grid; }
+  /* Both labels share one cell, so the button keeps its width as they swap. */
+  .export-action { display: inline-grid; place-items: center; }
   .export-action span { grid-area: 1 / 1; }
   .inactive { visibility: hidden; }
   .export-progress { position: absolute; inset: 0 0 auto; appearance: none; width: 100%; height: 2px; margin: 0; border: 0; background: var(--color-divider); overflow: hidden; }

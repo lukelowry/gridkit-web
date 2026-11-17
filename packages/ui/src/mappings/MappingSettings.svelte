@@ -6,14 +6,14 @@
   import { watchNotice } from '../ui/toasts.svelte.js';
   import { errorMessage } from '../ui/errors.js';
   import type { PreferencesState } from '../preferences/state.svelte.js';
-  import { resolveNetwork, networkTheme, placementOf, effectiveOptions, drawingOf, positionOf, networkSpace, earthSpace } from './defaults.js';
+  import { resolveNetwork, networkTheme, paletteTokens, placementOf, effectiveOptions, drawingOf, positionOf, networkSpace, earthSpace } from './defaults.js';
   import type { OptionControl } from './encoding.js';
   import type { ColorFit } from '../ui/ramps.js';
   import MappingRow, { type MappingDraft } from './MappingRow.svelte';
   import IconToggles from '../ui/IconToggles.svelte';
   import Icon from '../ui/Icon.svelte';
   import type { IconName } from '../ui/icons.js';
-  import { colorHex } from '../ui/color.js';
+  import { themeColors } from '../ui/color.js';
   import { simulationFields } from '../simulation/sampled.js';
   import type { Measure } from '../domain/measure.js';
   let { document, preferences, value, geographic = false, simulation = false, measure, band, scope = 'view', onchange, oninvalid = () => {} }: {
@@ -42,8 +42,7 @@
   // Previews draw what the view draws: its colormaps fitted to its background, at its contrast.
   const fit = $derived.by<ColorFit>(() => {
     void preferences.theme;
-    const css = getComputedStyle(window.document.documentElement), read = (name: string) => colorHex(css.getPropertyValue(name).trim()) ?? '#808080';
-    return { grounds: [read('--color-bg')], floor: preferences.contrast === 'high' ? 7 : 4.5 };
+    return { grounds: [themeColors(paletteTokens).background], floor: preferences.contrast === 'high' ? 7 : 4.5 };
   });
   /** An option's row; `unset` names what its default is when the mark sets nothing, latkit's own. */
   type Row = { id: string; label: string; option: keyof MappingOptions; control: OptionControl; range?: readonly [number, number]; unset?: string };

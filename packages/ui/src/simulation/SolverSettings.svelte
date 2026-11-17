@@ -107,7 +107,7 @@
 
 {#snippet numberField(field: (typeof solverFields)[number])}
   <div class="property-row">
-    <label for={controlId(field.key)}>{field.label}{#if field.unit} <span class="field-unit" id={`${controlId(field.key)}-unit`}>({field.unit})</span>{/if}</label>
+    <label for={controlId(field.key)}>{field.label}{#if field.unit}<span class="field-unit" id={`${controlId(field.key)}-unit`}>{field.unit}</span>{/if}</label>
     <div class="property-control property-field">
       <input id={controlId(field.key)} aria-label={field.label} type="number" step={field.step} min={field.min}
         max={field.key === 'max_order' ? 5 : undefined} required={!field.group}
@@ -143,7 +143,7 @@
         <legend class="sr-only">Event {index + 1}</legend>
         <div class="event-row">
           <div class="event-field event-time">
-            <label for={controlId(prefix + 'time')}>Time <span class="field-unit">(s)</span></label>
+            <label for={controlId(prefix + 'time')}>Time<span class="field-unit">s</span></label>
             <input id={controlId(prefix + 'time')} aria-label={`Event ${index + 1} time (s)`} type="number" step="any" min="0" max={value.tmax} bind:value={event.time}
               aria-invalid={errors.has(prefix + 'time') || undefined} aria-describedby={description(prefix + 'time')} />
             {@render errorFor(prefix + 'time')}
@@ -176,7 +176,7 @@
             {#each ['R', 'X'] as field (field)}
               {@const key = eventKey(index, field)}
               <div class="event-field">
-                <label for={controlId(key)}>{field} <span class="field-unit">(p.u.)</span></label>
+                <label for={controlId(key)}>{field}<span class="field-unit">p.u.</span></label>
                 <input id={controlId(key)} aria-label={`Event ${index + 1} ${field === 'R' ? 'resistance' : 'reactance'} (p.u.)`} type="number" step="any"
                   bind:value={event[field as 'R' | 'X']} aria-invalid={errors.has(key) || errors.has(prefix + 'impedance') || undefined}
                   aria-describedby={[description(key), description(prefix + 'impedance')].filter(Boolean).join(' ') || undefined} />

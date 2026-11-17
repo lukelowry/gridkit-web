@@ -10,8 +10,8 @@
   import type { Playhead } from './playhead.svelte.js';
   import { measureUnit } from '../domain/measure.js';
   import type { PreferencesState } from '../preferences/state.svelte.js';
-  import { gesturesOf, latkit } from '../ui/latkit.js';
-  import { colorHex } from '../ui/color.js';
+  import { controlsOf, focusOf, latkit } from '../ui/latkit.js';
+  import { themeColors } from '../ui/color.js';
   import { errorMessage } from '../ui/errors.js';
 
   let { plot, playhead, preferences, onseek, onviewport, onaxis, onretry, selected, hovered, onselect, onhover, ondetail }: {
@@ -46,24 +46,22 @@
   $effect(() => ondetail(hoveredChannel ? { label: label(hoveredChannel), value: sample ? numbers.format(sample.value) + (unit ? ' ' + unit : '' ) : '', at: sample ? sample.at.toFixed(3) + ' s' : '' } : null));
   const palette = $derived.by(() => {
     void preferences.theme; void preferences.contrast;
-    const css = getComputedStyle(document.documentElement);
-    const read = (name: string) => colorHex(css.getPropertyValue(name).trim(), true) ?? '#808080';
-    return { bg: read('--color-surface-1'), grid: read('--color-graph-grid'), text: read('--color-text-1'), ticks: read('--color-text-3'), hover: read('--color-graph-hover'), selected: read('--color-graph-selection'),
-      lines: [read('--color-primary-text'), '#0072b2', '#009e73', '#d55e00', '#cc79a7', '#56b4e9', '#e69f00', '#6c6c6c'] };
+    return themeColors({ background: '--color-surface-1', grid: '--color-graph-grid', text: '--color-text-1', ticks: '--color-text-3',
+      hover: '--color-graph-hover', selected: '--color-graph-selection', trace: '--color-primary-text' });
   });
+  // Input and highlights follow the settings the network follows; pressing or dragging across the plot moves the time shown.
+  const controls = $derived(controlsOf(preferences.value, preferences.motion));
   const scene = $derived<Scene>({
     ease: 0,
     // The dock names the quantity, units, and time; the canvas keeps only the numeric axes.
     space: { plot: { x: { label: null }, y: { label: null } } },
     // Traces keep 4.5:1 contrast with the plot's ground, or 7:1 in high contrast.
-    theme: { base: preferences.theme, background: palette.bg, grid: { color: palette.grid }, contrast: preferences.contrast === 'high' ? 7 : 4.5,
-      focus: { hover: palette.hover, selected: palette.selected },
+    theme: { base: preferences.theme, background: palette.background, grid: { color: palette.grid }, contrast: preferences.contrast === 'high' ? 7 : 4.5,
+      focus: focusOf(preferences.value, palette),
       text: { color: palette.ticks, ...typography }, plot: { playhead: palette.text } },
-    marks: [{ lines: ['simulation-plot', 'Trace'], trace: 'value', interpolation: 'linear',
-      color: { colormap: { kind: 'categorical', colors: palette.lines }, value: '$series' }, width: preferences.contrast === 'high' ? 2.5 : 1.5 }],
-    // Pressing or dragging across the plot moves the time shown.
-    controls: { gestures: { ...gesturesOf(preferences.value.wheel), primary: 'scrub' },
-      motion: preferences.motion === 'reduce' ? 'reduced' : 'full' },
+    marks: [{ lines: ['simulation-plot', 'Trace'], trace: 'value', interpolation: 'linear', width: preferences.contrast === 'high' ? 2.5 : 1.5,
+      color: { colormap: { kind: 'categorical', colors: [palette.trace, '#0072b2', '#009e73', '#d55e00', '#cc79a7', '#56b4e9', '#e69f00', '#6c6c6c'] }, value: '$series' } }],
+    controls: { ...controls, gestures: { ...controls.gestures, primary: 'scrub' } },
   });
 
   onMount(() => {
@@ -84,34 +82,33 @@
       live.insets = [edge, edge, edge, edge];
     };
     readTypography();
-    // The axis's ends on screen: projecting the times shown finds them wherever the value labels leave the plot area.
+    // The axis's ends on screen: projecting the times shown finds them wherever the value labels leave the plot area. Until the
+    // plot draws its first frame there is no layout to project into, only a canvas of the browser's default size.
     const measure = () => {
       const camera = live?.camera;
-      if (disposed || !live || !camera || !('x' in camera)) return;
+      if (disposed || !live?.stats.frames || !canvas.clientWidth || !camera || !('x' in camera)) return;
       const value = camera.y?.[0] ?? 0, start = live.screen([camera.x[0], value, 0]), end = live.screen([camera.x[1], value, 0]);
       if (!start || !end) return;
       const axis = { left: start[0], width: end[0] - start[0], from: camera.x[0], to: camera.x[1] }, key = JSON.stringify(axis);
       if (key !== measured) { measured = key; onaxis(axis); }
-      return axis;
+      return { camera, pixels: axis.width * canvas.width / canvas.clientWidth };
     };
+    /** Tells the feed the times shown and the device pixels they span: the detail it reads its samples at. */
     const report = (manual = false) => {
-      const axis = measure();
-      if (disposed || !live) return;
-      const camera = live.camera;
-      if ('x' in camera) {
-        const pixels = axis && canvas.clientWidth ? axis.width * canvas.width / canvas.clientWidth : canvas.width;
-        onviewport({ x: [...camera.x], y: camera.y ? [...camera.y] : null }, pixels, manual);
-      }
+      const shown = measure();
+      if (shown) onviewport({ x: [...shown.camera.x], y: shown.camera.y ? [...shown.camera.y] : null }, shown.pixels, manual);
     };
+    // The GPU's frames are every view's, and its listeners run before the views draw. Once this plot has drawn since the change,
+    // the microtask after that draw reads its layout, and nothing listens any more: an idle plot stays idle.
     const afterResize = () => {
       stopResize?.(); stopResize = undefined;
       if (!live || !canvas.clientWidth || !canvas.clientHeight) return;
-      // Latkit's frame listeners precede drawing. The microtask reads the layout after that draw,
-      // independent of browser observer ordering. Unsubscribe immediately: idle plots stay idle.
-      stopResize = live.gpu.on('frame', () => {
-        stopResize?.(); stopResize = undefined;
-        queueMicrotask(() => report());
-      });
+      const view = live, drawn = view.stats.frames;
+      const stop = stopResize = view.gpu.on('frame', () => queueMicrotask(() => {
+        if (disposed || stopResize !== stop || view.stats.frames === drawn) return;
+        stop(); stopResize = undefined;
+        report();
+      }));
     };
     const observer = new ResizeObserver(() => { readTypography(); compactInsets(); afterResize(); });
     observer.observe(canvas);
@@ -133,7 +130,7 @@
           }),
           live.on('camera', () => report(true)), live.on('waiting', () => { ready ||= live!.stats.frames > 0; measure(); }),
           live.on('error', failure => { error = failure.message; }));
-        view = live; report(); afterResize();
+        view = live; afterResize();
       } catch (cause) { if (!disposed) error = errorMessage(cause); }
     })();
     return () => { disposed = true; onhover(null); ondetail(null); observer.disconnect(); stopResize?.(); listeners.forEach(off => off()); live?.destroy(); };

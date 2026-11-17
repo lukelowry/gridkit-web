@@ -4,7 +4,7 @@ import { Data, type Source } from 'latkit';
 import { percentable, type Basis, type Measure } from '../domain/measure.js';
 import { errorMessage } from '../ui/errors.js';
 import { latkit } from '../ui/latkit.js';
-import { allSeriesLimit, channelsOf, pinnedSeriesLimit, quantitiesOf, type Quantity } from './channels.js';
+import { channelsOf, pinnedSeriesLimit, quantitiesOf, type Quantity } from './channels.js';
 import { sameReference } from '../domain/entries.js';
 import { BranchState, branchStateDataset } from './branches.js';
 import { compile, switchable, type Channel, type SimulationEvent, type Study } from '@gridkit/library/gridkit';
@@ -44,6 +44,7 @@ export class RunSession {
   live = $state(true);
   /** The quantity the plot shows; a bus quantity is the one the network reads too. */
   quantity = $state.raw<Quantity>();
+  /** Whether the plot draws every series of its quantity, or only the selected and pinned elements'. */
   plotMode = $state<'all' | 'focused'>('all');
   pinned = $state.raw<readonly (ElementRef & { readonly label: string })[]>([]);
   #selected: ElementRef | null = null;
@@ -63,7 +64,9 @@ export class RunSession {
   });
   /** Whether the run recorded any samples. */
   get recorded() { return this.range[1] > this.range[0]; }
-  get playing() { return (this.live && this.busy) || this.playhead.playing; }
+  /** Whether the time shown is moving with a run still recording. */
+  get following() { return this.live && this.busy; }
+  get playing() { return this.following || this.playhead.playing; }
   /** The samples the network draws, once latkit has loaded; the session owns them. */
   get data() { return this.#recording?.data; }
   get sources(): Source[] { return [...this.data ? [this.data] : [], ...this.#switching ? [this.#switching] : []]; }
@@ -112,7 +115,6 @@ export class RunSession {
         this.quantity = voltage ?? this.quantities[0];
         this.#busQuantity = voltage;
         recording.start(this.channels, this.reference);
-        if (this.quantity && this.quantity.channels.length > allSeriesLimit) this.plotMode = 'focused';
         this.#showPlot();
       }
     }, cause => { this.error = errorMessage(cause); this.failed = true; this.busy = false; this.playhead.pause(); });
@@ -132,7 +134,6 @@ export class RunSession {
     if (this.plotMode === 'focused') this.#showPlot();
   }
   setPlotMode(mode: 'all' | 'focused') {
-    if (mode === 'all' && (this.quantity?.channels.length ?? 0) > allSeriesLimit) return;
     if (mode === this.plotMode) return;
     this.plotMode = mode; this.#showPlot();
   }
@@ -160,7 +161,6 @@ export class RunSession {
     const quantity = this.quantities.find(quantity => quantity.key === key);
     if (!quantity || quantity === this.quantity) return;
     this.quantity = quantity;
-    if (quantity.channels.length > allSeriesLimit) this.plotMode = 'focused';
     if (quantity.channels[0]?.element.collection === 'buses') this.#busQuantity = quantity;
     if (this.basis === 'percent' && !percentable(quantity.unit)) this.basis = 'change';
     this.band = null;

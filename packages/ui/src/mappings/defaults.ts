@@ -2,6 +2,7 @@ import type { ColormapNode, CustomColormap, ScaleNode, Size, Theme, Scene } from
 import { elementCatalog, portsOf, record, type CaseDocument, type ElementTarget, type FieldInfo, type Position, type SavedViews, type Space } from '@gridkit/library';
 import type { Preferences } from '../preferences/definitions.js';
 import { isDark, rgbOf } from '../ui/color.js';
+import { focusOf } from '../ui/latkit.js';
 import { defaultMarks, mergeTheme, normalizeSpace, recognize, type MarkDefinition } from '../domain/views.js';
 import { resolveMappings } from './resolve.js';
 import { untrack } from 'svelte';
@@ -109,12 +110,14 @@ export function fittedSizes(drawing: Drawing | undefined, theme: SceneTheme, lea
   };
 }
 
+/** The page's tokens a network draws in, by what each colors. */
+export const paletteTokens = {
+  background: '--color-bg', vertex: '--color-primary-text', line: '--color-graph-line', text: '--color-text-1', grid: '--color-graph-grid',
+  surface: '--color-surface-2', hover: '--color-graph-hover', selected: '--color-graph-selection',
+} as const;
 /** Theme colors as CSS; the views normalize them for contrast calculations, and the mapping settings name them as tokens. */
-export interface Palette { background: string; vertex: string; line: string; text: string; grid: string; surface: string; hover: string; selected: string }
-const tokens: Palette = {
-  background: 'var(--color-bg)', vertex: 'var(--color-primary-text)', line: 'var(--color-graph-line)', text: 'var(--color-text-1)', grid: 'var(--color-graph-grid)',
-  surface: 'var(--color-surface-2)', hover: 'var(--color-graph-hover)', selected: 'var(--color-graph-selection)',
-};
+export type Palette = Record<keyof typeof paletteTokens, string>;
+const tokens = Object.fromEntries(Object.entries(paletteTokens).map(([role, token]) => [role, `var(${token})`])) as Palette;
 export type SceneTheme = Exclude<Theme, string>;
 
 /** Shared UI tokens translated into the network's rendering theme. */
@@ -126,8 +129,7 @@ export function networkTheme(v: Preferences, palette: Palette = tokens, base: 'l
     text: { color: v.networkTextColor || palette.text,
       font: `${v.networkFont || 'IBM Plex Sans'}, system-ui, sans-serif`, size: v.networkFontSize,
       halo: v.networkLabelHalo },
-    focus: { hover: v.hoverColor || palette.hover, selected: v.selectionColor || palette.selected, glow: v.hoverWidth, dim: v.unselectedAlpha,
-      grow: v.hoverScale },
+    focus: focusOf(v, palette),
     earth: { ground: palette.surface }, dash: v.dashPeriod,
   };
 }

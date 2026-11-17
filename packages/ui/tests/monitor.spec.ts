@@ -80,6 +80,20 @@ for (const edge of [false, true]) test('monitor and network mirror hover and cli
   await expect(network).not.toHaveAccessibleDescription(/Hovered:/);
 });
 
+test('the plot reads its samples at the width it draws, and playback speed opens once the run has ended', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const resolutions: number[] = [];
+  page.on('request', request => { if (request.url().endsWith('/summary')) resolutions.push(request.postDataJSON().resolution); });
+  const panel = await openResults(page), width = await panel.locator('canvas').evaluate((canvas: HTMLCanvasElement) => canvas.width);
+  // Its time axis spans most of its canvas: a width read before its first frame would ask for a fraction of this.
+  await expect.poll(() => resolutions.at(-1)).toBeGreaterThan(width / 2);
+  expect(resolutions.at(-1)).toBeLessThanOrEqual(width);
+  const speed = panel.getByRole('combobox', { name: 'Playback speed' });
+  await expect(speed).toBeEnabled();
+  await speed.selectOption({ label: '2×' });
+  await expect(speed).toHaveValue('2');
+});
+
 test('selected and pinned traces compare elements without restricting network playback', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const panel = await openResults(page);

@@ -44,7 +44,7 @@
           </details>
         {/if}
         <div class="property-row"><label for={id + '-identifier'}>{collection === 'devices' ? 'ID' : 'Number'}</label><div class="property-control"><input id={id + '-identifier'} readonly value={identifier} /></div></div>
-        <div class="property-row"><span class="property-label">Class</span><span class="identity-value">{kind}</span></div>
+        <div class="property-row"><label for={id + '-class'}>Class</label><div class="property-control"><input id={id + '-class'} readonly value={kind} /></div></div>
         {#if name !== undefined}<div class="property-row"><label for={id + '-name'}>Name</label><div class="property-control"><input id={id + '-name'} aria-label="Element name" readonly value={name} /></div></div>{/if}
       </section>
       {#if ports.length}
@@ -60,5 +60,4 @@
 </Dialog>
 <style>
   .completion { color: var(--color-text-3); font: var(--type-compact); margin-bottom: var(--spacing-md); }
-  .identity-value { color: var(--color-text-3); overflow-wrap: anywhere; }
 </style>

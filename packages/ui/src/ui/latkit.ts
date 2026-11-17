@@ -1,4 +1,5 @@
-import { Gpu, type Gestures } from 'latkit';
+import { Gpu, type Controls, type FocusTheme, type Gestures } from 'latkit';
+import type { Preferences } from '../preferences/definitions.js';
 
 let loading: Promise<Gpu> | undefined;
 
@@ -23,7 +24,18 @@ export function preload() { latkit().catch(() => {}); }
  * and a pinch zoom): two fingers twist to turn and slide to tilt, which a plot takes as panning. With zoom on Ctrl
  * or Cmd, the wheel scrolls the view instead, as a trackpad does.
  */
-export const gesturesOf = (wheel: 'wheel' | 'modifier'): Gestures => ({
+const gesturesOf = (wheel: Preferences['wheel']): Gestures => ({
   twist: 'turn', slide: 'tilt',
   ...wheel === 'modifier' && { wheel: 'pan', 'control+wheel': 'zoom', 'meta+wheel': 'zoom' },
+});
+
+/** How every view answers input, as Interaction's settings choose; a view adds the gestures of its own. */
+export const controlsOf = (v: Preferences, motion: 'reduce' | 'full'): Exclude<Controls, string> => ({
+  gestures: gesturesOf(v.wheel), keyboard: v.keyboard, hover: v.hover, pickRadius: v.pickRadius, cycle: v.cycle,
+  motion: motion === 'reduce' ? 'reduced' : 'full',
+});
+
+/** How every view shows what is hovered and selected, as Highlight's settings choose, in `palette` where they name no color. */
+export const focusOf = (v: Preferences, palette: { readonly hover: string; readonly selected: string }): FocusTheme => ({
+  hover: v.hoverColor || palette.hover, selected: v.selectionColor || palette.selected, glow: v.hoverWidth, dim: v.unselectedAlpha, grow: v.hoverScale,
 });

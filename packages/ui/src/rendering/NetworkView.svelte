@@ -6,7 +6,7 @@
   import type { CaseDocument, ElementRef, SavedViews } from '@gridkit/library';
   import { geographyOf } from '../preferences/definitions.js';
   import type { PreferencesState } from '../preferences/state.svelte.js';
-  import { earthSpace, networkSpace, type Palette } from '../mappings/defaults.js';
+  import { earthSpace, networkSpace, paletteTokens } from '../mappings/defaults.js';
   import { fieldsIn } from '../domain/views.js';
   import { sampledName, simulationFields } from '../simulation/sampled.js';
   import type { RunSession } from '../simulation/run.svelte.js';
@@ -14,7 +14,8 @@
   import { colorScaleOf } from '../mappings/encoding.js';
   import type { ColorScale } from '../ui/ramps.js';
   import { sameReference, entryOf } from '../domain/entries.js';
-  import { colorHex } from '../ui/color.js';
+  import { themeColors } from '../ui/color.js';
+  import { reload } from '../ui/errors.js';
   import type { MenuItem } from '../ui/menu.js';
   import { dataset, refOf, rowsOf, tables } from './data.js';
   import { networkScene, spaceOf, tablesOf, themeOf } from './scene.js';
@@ -39,7 +40,9 @@
     exportable?: boolean;
   } = $props();
 
-  watchNotice(() => active && fault ? 'Rendering is unavailable. ' + fault : '', () => ({ action: { label: 'Try rendering again', run: () => host.retry(canvas) } }));
+  // A stopped runtime draws again only in a new page; anything else is worth another try in this one.
+  watchNotice(() => active && fault ? 'Rendering is unavailable. ' + fault : '',
+    () => ({ action: host.stopped ? reload : { label: 'Try rendering again', run: () => host.retry(canvas) } }));
   watchNotice(() => active && !fault ? geographyNotice : '');
   watchNotice(() => active && issues.length ? issues.map(issue => issue.path + ': ' + issue.message).join('\n') : '');
   const tilt = 45;
@@ -56,14 +59,7 @@
   let picked: ElementRef | null | undefined;
 
   // Normalize CSS colors for the UI's contrast calculations; the theme attribute is set before effects read this.
-  const palette = $derived.by((): Palette => {
-    void preferences.theme; void preferences.contrast;
-    const style = getComputedStyle(window.document.documentElement);
-    const read = (name: string) => colorHex(style.getPropertyValue(name).trim(), true) ?? '#808080';
-    return { background: read('--color-bg'), vertex: read('--color-primary-text'), line: read('--color-graph-line'), text: read('--color-text-1'),
-      grid: read('--color-graph-grid'), surface: read('--color-surface-2'), hover: read('--color-graph-hover'),
-      selected: read('--color-graph-selection') };
-  });
+  const palette = $derived.by(() => { void preferences.theme; void preferences.contrast; return themeColors(paletteTokens); });
   const simulationActive = $derived(!!run?.data && run.channels.length > 0);
   const scene = $derived.by(() => {
     return networkScene({ document, preferences, palette, mappings, geographic, globe, simulation: simulationActive, sampled: run?.sampledFields ?? [], measure: run?.networkMeasure, band: run?.band,

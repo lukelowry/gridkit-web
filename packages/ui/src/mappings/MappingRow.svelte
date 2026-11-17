@@ -6,7 +6,6 @@
   import { sampledName } from '../simulation/sampled.js';
   import { defaultBand, fieldOf, measureOf, percentable, type Basis } from '../domain/measure.js';
   import { colorHex } from '../ui/color.js';
-  import Icon from '../ui/Icon.svelte';
   import IconToggles from '../ui/IconToggles.svelte';
   import Popover from '../ui/Popover.svelte';
   import { voltagePalette } from './defaults.js';
@@ -133,7 +132,6 @@
             {:else if fixedColor(shown)}<i class="c-ramp" style:background={fixedColor(shown)}></i>{/if}
             <span>{own.kind === 'inherit' ? 'Default' : summary(own)}{reach ? ` ${reach}` : ''}</span>
           </span>
-          <Icon name="chevron" />
         </button>
       {/snippet}
       {#snippet children()}

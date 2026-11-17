@@ -9,7 +9,7 @@
   import { save } from '../ui/files.js';
   import { eventActions } from './solver-fields.js';
   import { speeds } from './playhead.svelte.js';
-  import { allSeriesLimit, channelsOf, pinnedSeriesLimit } from './channels.js';
+  import { channelsOf, pinnedSeriesLimit } from './channels.js';
   import { sameReference } from '../domain/entries.js';
   import { defaultBand, measureUnit, percentable } from '../domain/measure.js';
   import { rampCss, scaleTicks, type ColorScale } from '../ui/ramps.js';
@@ -78,7 +78,8 @@
   $effect(() => { if (scrubber) scrubber.value = String(time); });
 </script>
 
-<svelte:document onvisibilitychange={() => { if (document.hidden) run.play(false); }} />
+<!-- A hidden tab stops playing back; a run still recording is followed again once the tab shows. -->
+<svelte:document onvisibilitychange={() => { if (document.hidden) run.playhead.pause(); }} />
 <section class={['results-dock', side]} aria-label="Simulation">
   <div class="results-toolbar">
     <div class="results-measure">
@@ -93,8 +94,8 @@
           </optgroup>
         {/each}
       </select>
-      {#if displayUnit}<span class="results-unit" aria-label={run.basis === 'value' ? displayUnit : `${run.basis === 'percent' ? 'Percent change' : 'Change'}, ${displayUnit}`}>
-        ({run.basis === 'percent' ? '% change' : `${run.basis === 'change' ? 'Δ ' : ''}${displayUnit}`})
+      {#if displayUnit}<span class="field-unit" aria-label={run.basis === 'value' ? displayUnit : `${run.basis === 'percent' ? 'Percent change' : 'Change'}, ${displayUnit}`}>
+        {run.basis === 'percent' ? '% change' : `${run.basis === 'change' ? 'Δ ' : ''}${displayUnit}`}
       </span>{/if}
     </div>
     <div class="results-panel-actions">
@@ -113,11 +114,8 @@
           </fieldset>
           <fieldset class="c-options" disabled={!run.quantity}>
             <legend>Series</legend>
-            <label class="c-action" title={`All-series plots support up to ${allSeriesLimit} series. Select and pin elements for larger quantities.`}>
-              <input type="radio" name={`${contentId}-series`} checked={run.plotMode === 'all'}
-                disabled={(run.quantity?.channels.length ?? 0) > allSeriesLimit} onchange={() => run.setPlotMode('all')} />
-              All series ({run.quantity?.channels.length ?? 0})
-            </label>
+            <label class="c-action"><input type="radio" name={`${contentId}-series`} checked={run.plotMode === 'all'}
+              onchange={() => run.setPlotMode('all')} />All series ({(run.quantity?.channels.length ?? 0).toLocaleString()})</label>
             <label class="c-action"><input type="radio" name={`${contentId}-series`} checked={run.plotMode === 'focused'}
               onchange={() => run.setPlotMode('focused')} />Selected and pinned</label>
             <button class="c-action" type="button" disabled={!canPin} title={`Pin up to ${pinnedSeriesLimit} elements to compare their traces.`}
@@ -134,7 +132,7 @@
             </div>
           {/if}
           <div class="c-options">
-            <button class="c-action" type="button" disabled={!run.recorded || run.live} onclick={() => { close(); run.follow(); }}><Icon name="play" />Follow live</button>
+            <button class="c-action" type="button" disabled={!run.busy || run.live} onclick={() => { close(); run.follow(); }}><Icon name="play" />Follow live</button>
             <button class="c-action" type="button" disabled={!plot} onclick={() => { close(); run.fit(); }}><Icon name="fit" />Fit plot</button>
           </div>
           {#if scale}
@@ -215,9 +213,9 @@
       <button class="c-icon-btn" aria-label={run.playing ? 'Pause' : 'Play'} title={run.playing ? 'Pause' : 'Play'}
         disabled={!run.recorded} onclick={() => run.play(!run.playing)}><Icon name={run.playing ? 'pause' : 'play'} /></button>
       <div class="playback-meta">
-        <output class="time" aria-label="Current simulation time" aria-live="off"><span class="time-label">Time</span> {seconds(time)}<span class="time-duration"> / {seconds(run.timeline[1])}</span> <span>s</span></output>
+        <output class="time" aria-label="Current simulation time" aria-live="off"><span class="time-label">Time</span> {seconds(time)} <span class="time-duration">/ {seconds(run.timeline[1])}</span> <span>s</span></output>
         <output class="trace-detail" aria-label="Hovered series" aria-live="off" title={detail ? [detail.label, detail.value, detail.at].filter(Boolean).join(' / ') : undefined}><bdi>{detail?.label ?? ''}</bdi> <span>{detail?.value ?? ''}</span> <span>{detail?.at ?? ''}</span></output>
-        <select class="speed" aria-label="Playback speed" bind:value={run.playhead.speed} disabled={!run.recorded || run.live}>
+        <select class="speed" aria-label="Playback speed" bind:value={run.playhead.speed} disabled={!run.recorded || run.following}>
           <button type="button"><selectedcontent></selectedcontent></button>
           {#each speeds as speed (speed)}<option value={speed}>{speed}×</option>{/each}
         </select>
@@ -234,7 +232,7 @@
   .results-panel-actions { display: flex; align-items: center; flex: none; gap: var(--spacing-2xs); margin-inline-start: auto; }
   .results-measure { flex: 1; display: flex; align-items: center; gap: var(--spacing-xs); min-width: 0; }
   .results-quantity { flex: 1; width: 0; max-width: 18rem; min-width: 0; text-overflow: ellipsis; white-space: nowrap; }
-  .results-unit { flex: none; color: var(--color-text-3); font: var(--type-caption); white-space: nowrap; }
+  .results-measure > .field-unit { flex: none; margin: 0; white-space: nowrap; }
   .results-content { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; border-top: 1px solid var(--color-divider); }
   .results-body { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
   .series-count { flex: none; margin: 0; padding: var(--spacing-2xs) var(--spacing-sm); color: var(--color-text-2); font: var(--type-caption); }
@@ -274,15 +272,13 @@
   .scrubber input { appearance: none; -webkit-appearance: none; position: absolute; inset: 0 -6px; width: calc(100% + 12px); height: 100%; min-height: 0;
     margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; cursor: pointer; }
   .scrubber input:disabled { cursor: default; }
-  .scrubber:has(input:disabled) :is(.scrubber__track, .scrubber__marks) { opacity: 0.5; }
+  .scrubber:has(input:disabled) :is(.scrubber__track, .scrubber__marks) { opacity: var(--opacity-disabled); }
   .scrubber input::-webkit-slider-runnable-track { height: 4px; background: transparent; }
   .scrubber input::-moz-range-track { height: 4px; background: transparent; }
   .scrubber input::-webkit-slider-thumb { -webkit-appearance: none; box-sizing: border-box; width: 12px; height: 12px; margin-top: -4px;
     border: 2px solid var(--color-primary-text); border-radius: 50%; background: var(--color-surface-1); }
   .scrubber input::-moz-range-thumb { box-sizing: border-box; width: 12px; height: 12px; border: 2px solid var(--color-primary-text); border-radius: 50%;
     background: var(--color-surface-1); }
-  .scrubber input:disabled::-webkit-slider-thumb { opacity: 0.5; }
-  .scrubber input:disabled::-moz-range-thumb { opacity: 0.5; }
   .scrubber input:focus-visible { outline: none; }
   /* The thumb takes the focus ring; a pseudo-element has no outline of its own. */
   .scrubber input:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 var(--focus-width) var(--color-focus); }

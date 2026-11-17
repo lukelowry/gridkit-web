@@ -4,7 +4,7 @@ import { drawingOf, networkSpace, earthSpace, fittedSizes, resolveNetwork, netwo
 import { representation, type Diagnostic, type MarkDefinition } from '../domain/views.js';
 import type { PreferencesState } from '../preferences/state.svelte.js';
 import { legible, rgbOf } from '../ui/color.js';
-import { gesturesOf } from '../ui/latkit.js';
+import { controlsOf } from '../ui/latkit.js';
 import { dataset, tableOf } from './data.js';
 import { branchStateDataset, branchStateTable } from '../simulation/branches.js';
 import { simulationFields, simulationOption, type SampledField } from '../simulation/sampled.js';
@@ -90,8 +90,7 @@ export function networkScene({ document, preferences, palette, mappings, geograp
     marks, theme: { ...resolved.theme, missing, contrast: floor },
     // A network lays out only the buses its case does not place.
     layout: drawing.placed ? 'none' : 'stress',
-    controls: { gestures: gesturesOf(v.wheel), keyboard: v.keyboard,
-      hover: v.hover, pickRadius: v.pickRadius, cycle: v.cycle, motion: preferences.motion === 'reduce' ? 'reduced' : 'full' },
+    controls: controlsOf(v, preferences.motion),
     ease: simulation || preferences.motion === 'reduce' ? 0 : v.animationMs / 1000,
   };
   return { scene, entries, diagnostics };
