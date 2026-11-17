@@ -1,16 +1,16 @@
-import type { Channel } from '@gridkit/library/gridkit';
 import { Patch } from 'latkit';
-import { isTerminal, openReader, type Cursor, type ResultReader, type RunState, type Samples, type SummaryReply, type Tile, type TimeRange } from '@gridkit/solver';
+import { isTerminal, openReader, type Cursor, type ResultReader, type RunState, type SummaryReply, type Tile, type TimeRange } from '@gridkit/solver';
 import { affine, type Affine, type Basis } from '../domain/measure.js';
 import type { ResultsCommand, ResultsMessage, ResultsReply } from './results.js';
+import type { NetworkPlan } from './recording-plan.js';
 
 /** How often a feed that has caught up asks for more. */
 const interval = 1000 / 30;
 
-/** What the network draws: exact rows of `channels`, from the start, as recorded. Its measures read them in latkit. */
+/** What the network draws, from the start, with reads and transfers bounded independently of its width. */
 export interface NetworkFeed {
   readonly kind: 'network';
-  readonly channels: readonly Channel[];
+  readonly plan: NetworkPlan;
   /** Every Nth row, where the whole run would not fit. */
   readonly every: number;
   readonly maxBytes: number;
@@ -31,7 +31,15 @@ interface Revision {
   state: RunState;
   range: TimeRange | null;
 }
-export interface NetworkPage extends Revision { bytes: Uint8Array }
+export interface NetworkPage extends Revision {
+  bytes: Uint8Array;
+  /** Byte offset and total size of this fragment's LATK patch. */
+  offset: number;
+  length: number;
+  begin: boolean;
+  reset: boolean;
+  complete: boolean;
+}
 /** One tile of a plot's update, which commits as a whole: history first, sealed for the next update, then the edges around it. */
 export interface PlotPage extends Revision {
   history: Uint8Array;
@@ -44,42 +52,6 @@ export interface PlotPage extends Revision {
 
 /** The values each plotted column's measure is taken from, by column. */
 type References = ReadonlyMap<string, number>;
-type Scatter = Map<string, { column: number; row: number }[]>;
-/** Packs rows as latkit patches. Row identities and column scatter plans are built once; values convert to the renderer's Float32. */
-export class NetworkPacker {
-  #tables: { name: string; ids: string[]; fields: Scatter }[];
-  constructor(channels: readonly Channel[]) {
-    const tables = new Map<string, { ids: string[]; rows: Map<string, number>; fields: Scatter }>();
-    channels.forEach((channel, column) => {
-      const name = channel.element.collection;
-      let table = tables.get(name);
-      if (!table) { table = { ids: [], rows: new Map(), fields: new Map() }; tables.set(name, table); }
-      let row = table.rows.get(channel.element.id);
-      if (row === undefined) { row = table.ids.length; table.rows.set(channel.element.id, row); table.ids.push(channel.element.id); }
-      const field = table.fields.get(channel.output) ?? [];
-      field.push({ column, row }); table.fields.set(channel.output, field);
-    });
-    this.#tables = [...tables].map(([name, table]) => ({ name, ...table }));
-  }
-  /** The rows of `block`, after those already installed unless `reset`. */
-  pack(block: Samples, reset: boolean) {
-    const times = Array.from(block.times), columns = block.columns.length;
-    const patch = new Patch('simulation').axis('Time', 's');
-    for (const table of this.#tables) {
-      if (reset) patch.replace(table.name, table.ids, {});
-      const fields: Record<string, Float32Array> = {};
-      for (const [name, entries] of table.fields) {
-        const values = new Float32Array(times.length * table.ids.length).fill(NaN);
-        for (const { column, row } of entries)
-          for (let i = 0; i < times.length; i++) values[i*table.ids.length+row] = block.values[i*columns+column]!;
-        fields[name] = values;
-      }
-      if (times.length) patch.append(table.name, times, fields, { ids: table.ids });
-    }
-    return patch.toBytes();
-  }
-}
-
 /**
  * Converts once to the renderer's Float32. latkit envelopes hold all minima, then all maxima. Each plane holds its columns in
  * turn, and `shifts` holds one for each.
@@ -127,14 +99,60 @@ async function referencesOf(reader: ResultReader, columns: readonly string[], re
   return new Map(samples.columns.map((column, index) => [column, samples.values[index] ?? NaN]));
 }
 
-/** The network's rows, from the first to the last the run records, each page holding what fits. */
-export async function* networkPages(reader: ResultReader, { channels, every, maxBytes }: NetworkFeed, signal: AbortSignal): AsyncGenerator<NetworkPage> {
-  const packer = new NetworkPacker(channels), columns = channels.map(channel => channel.column);
+/** A complete patch can exceed a packet when one field is wide; its byte fragments never do. */
+function* networkFragments(bytes: Uint8Array, revision: Revision, maxBytes: number,
+  flags: Pick<NetworkPage, 'begin' | 'reset' | 'complete'>): Generator<NetworkPage> {
+  for (let offset = 0; offset < bytes.length; offset += maxBytes) yield { ...revision, ...flags,
+    begin: flags.begin && offset === 0, reset: flags.reset && offset === 0,
+    complete: flags.complete && offset + maxBytes >= bytes.length,
+    bytes: bytes.slice(offset, offset + maxBytes), offset, length: bytes.length };
+}
+
+/** Shards read the same immutable sample indices, even while the recording grows between reads. */
+export async function* networkPages(reader: ResultReader, { plan, every, maxBytes }: NetworkFeed, signal: AbortSignal): AsyncGenerator<NetworkPage> {
+  const maxColumns = Math.floor(maxBytes / 8) - 1;
+  if (maxColumns < 1 || maxBytes > 8 * 1024 * 1024) throw new RangeError('Invalid network packet budget.');
+  const fields = plan.tables.flatMap(table => table.fields.map(field => ({ table, field })));
+  if (!fields.length) return;
+  const firstEntries = fields[0]!.field.entries.slice(0, maxColumns);
+  const width = Math.min(maxColumns, Math.max(...fields.map(({ field }) => field.entries.length)));
+  const count = Math.max(1, Math.min(4096, Math.floor(maxBytes / plan.bytesPerFrame), Math.floor(maxBytes / (8 * (width + 1)))));
   let from = 0;
   while (true) {
-    const { rows, state, range, samples } = await reader.rows({ columns, from, every, wait: true, maxBytes }, signal);
+    signal.throwIfAborted();
+    const { rows, state, range, samples } = await reader.rows({ columns: firstEntries.map(entry => plan.columns[entry.column]!),
+      from, every, count, wait: true, maxBytes }, signal);
     if (samples.times.length) {
-      yield { bytes: packer.pack(samples, from === 0), rows, state, range };
+      const revision = { rows, state, range }, reset = from === 0;
+      let begin = true;
+      if (reset) for (const table of plan.tables) {
+        const empty = new Patch('simulation').axis('Time', 's').replace(table.name, [], {}).toBytes();
+        yield* networkFragments(empty, revision, maxBytes, { begin, reset: begin, complete: false });
+        begin = false;
+        for (let offset = 0; offset < table.ids.length; offset += 8192) {
+          const ids = table.ids.slice(offset, offset + 8192);
+          yield* networkFragments(new Patch('simulation').set(table.name, ids, {}).toBytes(), revision, maxBytes,
+            { begin: false, reset: false, complete: false });
+        }
+      }
+      for (let index = 0; index < fields.length; index++) {
+        const { table, field } = fields[index]!, values = new Float32Array(samples.times.length * table.ids.length).fill(NaN);
+        for (let offset = 0; offset < field.entries.length; offset += maxColumns) {
+          const entries = field.entries.slice(offset, offset + maxColumns), columns = entries.map(entry => plan.columns[entry.column]!);
+          const block = index === 0 && offset === 0 ? samples : (await reader.rows({ columns,
+            from: samples.first, every, count: samples.times.length, maxBytes }, signal)).samples;
+          if (block.first !== samples.first || block.times.length !== samples.times.length ||
+            block.times.some((at, i) => at !== samples.times[i]) || block.values.length !== block.times.length * columns.length)
+            throw new Error('The recording changed its committed sample rows.');
+          entries.forEach(({ row }, column) => {
+            for (let i = 0; i < block.times.length; i++) values[i * table.ids.length + row] = block.values[i * columns.length + column]!;
+          });
+        }
+        const patch = new Patch('simulation').frames(table.name, field.name,
+          { first: samples.first / every, at: samples.times, values });
+        yield* networkFragments(patch.toBytes(), revision, maxBytes, { begin, reset: false, complete: index === fields.length - 1 });
+        begin = false;
+      }
       from = samples.first + samples.times.length * every;
     }
     if (from >= rows) {

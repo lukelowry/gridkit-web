@@ -36,9 +36,14 @@ export class PlotFeed {
 
   /** Plots `quantity` as `basis` from `reference`: its values fit anew, and the times shown stay. */
   show(quantity: Quantity, basis: Basis, reference: number | null) {
+    if (this.#shown?.quantity === quantity && this.#shown.basis === basis && this.#shown.reference === reference) return;
     this.#shown = { quantity, basis, reference };
     if (this.#viewport) this.#viewport = { ...this.#viewport, y: null };
     this.#subscribe();
+  }
+  clear() {
+    clearTimeout(this.#timer);
+    this.#feed.stop(); this.#shown = undefined; this.plot = undefined;
   }
   #subscribe() {
     clearTimeout(this.#timer);

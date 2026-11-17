@@ -1,10 +1,11 @@
 import { untrack } from 'svelte';
 import { field, type Expr, type ExprInput } from 'latkit';
-import { record, type CaseDocument, type ElementTarget, type FieldInfo } from '@gridkit/library';
+import { record, targetKey, type CaseDocument, type ElementTarget, type FieldInfo } from '@gridkit/library';
 import { fieldsIn } from '../domain/views.js';
 import { outputLabel } from './channels.js';
 import { recordedOutputs, type Channel } from '@gridkit/library/gridkit';
 import { defaultBand, measureOf, referenceField } from '../domain/measure.js';
+import { recordingTable } from './recording-plan.js';
 
 export const simulationDataset = 'simulation';
 /** A sampled field the network reads, of the elements `target` names: `Vm` or `Vm~change`. */
@@ -14,33 +15,47 @@ export const matchesField = (channel: Channel, sampled: SampledField) => channel
 /** The sampled field `id` names, without its `simulation.`, or `null` for any other field. */
 export const sampledName = (id: string) => id.startsWith('simulation.') ? id.slice('simulation.'.length) : null;
 
+type FieldLookup = (target: ElementTarget) => readonly FieldInfo[];
+const fieldLookups = new WeakMap<CaseDocument, FieldLookup>();
+
 /**
  * A case's fields beside what a run of it records, the same before, during, and after one. A mapping can name them at any time;
  * a basis belongs to the field that names it, not to this list.
  */
-export function simulationFields(document: CaseDocument): (target: ElementTarget) => readonly FieldInfo[] {
+export function simulationFields(document: CaseDocument): FieldLookup {
+  const kept = fieldLookups.get(document);
+  if (kept) return kept;
   const known = new Map<string, readonly FieldInfo[]>();
-  return target => {
-    const key = JSON.stringify([target.collection, target.class ?? null]);
+  const scanned = new Set<string>();
+  const recorded = new Map<string, Map<string, { unit?: string | undefined; present: number }>>();
+  const lookup: FieldLookup = target => {
+    const key = targetKey(target);
     let fields = known.get(key);
     if (fields) return fields;
     const own = document.fields(target), total = own.reduce((n, field) => Math.max(n, field.presence.total), 0);
-    const outputs = new Map<string, { unit?: string | undefined; present: number }>();
-    // Which outputs exist depends on the case's classes, not its values: no reader should follow every edit for it.
-    if (target.collection !== 'signals') untrack(() => {
+    // Build collection and class counts together, once for this immutable document.
+    if (target.collection !== 'signals' && !scanned.has(target.collection)) untrack(() => {
+      scanned.add(target.collection);
       for (const row of document.rows(target.collection)) {
-        if (target.class && row.value.class !== target.class) continue;
+        const keys = [targetKey({ collection: target.collection }), targetKey({ collection: target.collection, class: String(row.value.class) })];
         for (const { id, unit } of recordedOutputs(row)) {
-          const output = outputs.get(id) ?? { unit, present: 0 };
-          output.present++; outputs.set(id, output);
+          for (const group of keys) {
+            let outputs = recorded.get(group);
+            if (!outputs) recorded.set(group, outputs = new Map());
+            const output = outputs.get(id) ?? { unit, present: 0 };
+            output.present++; outputs.set(id, output);
+          }
         }
       }
     });
+    const outputs = recorded.get(key) ?? new Map<string, { unit?: string | undefined; present: number }>();
     fields = [...own, ...[...outputs].map(([output, { unit, present }]) => ({ id: `simulation.${output}`, label: outputLabel(output), kind: 'number' as const,
       ...unit && { unit }, presence: { present, total } }))];
     known.set(key, fields);
     return fields;
   };
+  fieldLookups.set(document, lookup);
+  return lookup;
 }
 
 /**
@@ -48,7 +63,7 @@ export function simulationFields(document: CaseDocument): (target: ElementTarget
  * keeps beside it at the reference, as `affine` reads it for the plot. A zero reference has no percent: dividing by 0 is missing.
  */
 export function sampledExpression(name: string, target: ElementTarget): Expr {
-  const { output, basis } = measureOf(name), table = [simulationDataset, target.collection] as const;
+  const { output, basis } = measureOf(name), table = [simulationDataset, recordingTable(target)] as const;
   const value = field(output).from(table);
   if (basis === 'value') return value;
   const from = field(referenceField(output)).from(table), change = value.sub(from);

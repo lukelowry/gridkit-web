@@ -79,3 +79,23 @@ for (const edge of [false, true]) test('monitor and network mirror hover and cli
   await panel.getByRole('button', { name: 'Close results' }).click();
   await expect(network).not.toHaveAccessibleDescription(/Hovered:/);
 });
+
+test('selected and pinned traces compare elements without restricting network playback', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const panel = await openResults(page);
+  await page.getByRole('button', { name: 'Table', exact: true }).click();
+  await page.getByRole('gridcell', { name: 'North', exact: true }).click();
+  await panel.getByRole('button', { name: 'Plot options', exact: true }).click();
+  await panel.getByRole('radio', { name: 'Selected and pinned', exact: true }).check();
+  await panel.getByRole('button', { name: 'Pin selected element', exact: true }).click();
+  await expect(panel.getByRole('button', { name: 'Unpin Bus 1', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(panel.getByText('1 of 2 series · selected and pinned', { exact: true })).toBeVisible();
+  await page.getByRole('gridcell', { name: 'South', exact: true }).click();
+  await expect(panel.getByText('2 of 2 series · selected and pinned', { exact: true })).toBeVisible();
+  await panel.getByRole('button', { name: 'Plot options', exact: true }).click();
+  await panel.getByRole('button', { name: 'Unpin Bus 1', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await expect(panel.getByText('1 of 2 series · selected and pinned', { exact: true })).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'Play', exact: true })).toBeEnabled();
+});

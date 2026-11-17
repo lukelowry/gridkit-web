@@ -29,7 +29,10 @@ export function isGeographic(document: CaseDocument): boolean {
 }
 
 /** Each drawn table's rows in storage order. Bus and Signal always exist; marks may name them before any row does. */
-export function tables(document: CaseDocument): Map<string, readonly ElementRecord[]> {
+const grouped = new WeakMap<CaseDocument, ReadonlyMap<string, readonly ElementRecord[]>>();
+export function tables(document: CaseDocument): ReadonlyMap<string, readonly ElementRecord[]> {
+  const kept = grouped.get(document);
+  if (kept) return kept;
   const result = new Map<string, ElementRecord[]>([['Bus', []], ['Signal', []]]);
   for (const collection of collections) {
     const named = new Map<unknown, ElementRecord[] | null>();
@@ -42,34 +45,35 @@ export function tables(document: CaseDocument): Map<string, readonly ElementReco
       rows?.push(row);
     }
   }
+  grouped.set(document, result);
   return result;
 }
 
 const id = (connection: Connection | undefined) => connection !== undefined && typeof connection !== 'number' ? connection.id : null;
 
-/** A field a table is written with: its name, its kind, and its values for rows given with their elements' fields. */
-export type Column = readonly [name: string, kind: string, values: (rows: readonly ElementRecord[], fields: readonly Record<string, unknown>[]) => Fields[string]];
+/** A field's name and its values for rows given with their elements' fields. */
+export type Column = readonly [name: string, values: (rows: readonly ElementRecord[], fields: readonly Record<string, unknown>[]) => Fields[string]];
 
 /** Columns preserve scalar field kinds and connections by element identity. */
 export function tableColumns(document: CaseDocument, table: string): Column[] {
   const columns: Column[] = [];
   for (const { id: name, kind } of document.fields(targetOfTable(table))) {
     if (name === 'uuid' || name.startsWith('ports.')) continue;
-    if (kind === 'number') columns.push([name, kind, (_, values) => Float64Array.from(values, row => typeof row[name] === 'number' ? row[name] : NaN)]);
-    else if (kind === 'text') columns.push([name, kind, (_, values) => values.map(row => typeof row[name] === 'string' ? row[name] : null)]);
-    else if (kind === 'bool') columns.push([name, kind, (_, values) => values.map(row => typeof row[name] === 'boolean' ? row[name] : null)]);
+    if (kind === 'number') columns.push([name, (_, values) => Float64Array.from(values, row => typeof row[name] === 'number' ? row[name] : NaN)]);
+    else if (kind === 'text') columns.push([name, (_, values) => values.map(row => typeof row[name] === 'string' ? row[name] : null)]);
+    else if (kind === 'bool') columns.push([name, (_, values) => values.map(row => typeof row[name] === 'boolean' ? row[name] : null)]);
   }
   const port = (name: string, { target }: PortDefinition): Column =>
-    [`ports.${name}`, 'reference', rows => reference(target === 'buses' ? 'Bus' : 'Signal', rows.map(row => id(portsOf(row)[name])))];
+    [`ports.${name}`, rows => reference(target === 'buses' ? 'Bus' : 'Signal', rows.map(row => id(portsOf(row)[name])))];
   for (const [name, item] of Object.entries(elementCatalog.get(table)?.ports ?? {})) columns.push(port(name, item));
   return columns;
 }
 
 function fieldsOf(columns: readonly Column[], rows: readonly ElementRecord[]): Record<string, Fields[string]> {
   const values = rows.map(elementFields);
-  return Object.fromEntries(columns.map(([name, , write]) => [name, write(rows, values)]));
+  return Object.fromEntries(columns.map(([name, write]) => [name, write(rows, values)]));
 }
 /** Writes one immutable case table. */
-export function writeRows(patch: Patch, table: string, columns: readonly Column[], rows: readonly ElementRecord[]) {
-  patch.replace(table, rows.map(row => row.ref.id), fieldsOf(columns, rows));
+export function writeRows(patch: Patch, table: string, columns: readonly Column[], rows: readonly ElementRecord[], mode: 'replace' | 'set' = 'replace') {
+  patch[mode](table, rows.map(row => row.ref.id), fieldsOf(columns, rows));
 }

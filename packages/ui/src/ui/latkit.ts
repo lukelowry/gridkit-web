@@ -3,8 +3,8 @@ import { Gpu, type Gestures } from 'latkit';
 let loading: Promise<Gpu> | undefined;
 
 /**
- * The page's GPU, which every view draws with: latkit downloads its shaders while its WebAssembly compiles, then makes
- * the WebGL2 device, and moves the views to a new one when it is lost. A failed load is tried again on the next call.
+ * The page's GPU, shared by every view. Its WebAssembly carries the shaders; jobs load their own module when needed.
+ * Latkit moves views to a replacement device when it is lost. A failed load is tried again on the next call.
  */
 export function latkit(): Promise<Gpu> {
   // Gpu.create also loads the runtime, with a bounded wait for both loading and the device.

@@ -93,7 +93,7 @@
     return [verb + ': ' + entry.class + ' ' + entry.label + (entry.name ? ' (' + entry.name + ')' : '')];
   }).join('. '));
   const rows = $derived(tables(document));
-  const extra = (): Source[] => [...geography, ...run?.data ? [run.data] : []];
+  const extra = (): Source[] => [...geography, ...run?.sources ?? []];
   const host = new NetworkHost({
     document: () => document, scene: () => scene, rows: () => rows, extra, dock: () => dock,
     pitch: () => preferences.value.defaultProjection === 'tilt' ? tilt : 0,

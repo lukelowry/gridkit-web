@@ -3,6 +3,7 @@ import type { Quantity } from './channels.js';
 import type { Basis } from '../domain/measure.js';
 import type { PlotPage } from './results.worker.js';
 import type { TimeRange } from '@gridkit/solver';
+import { Pace } from '../ui/pace.js';
 
 export interface PlotViewport {
   readonly x: TimeRange;
@@ -34,30 +35,6 @@ export interface PlotData {
   /** The time they deviate from, or the first sample without one. */
   readonly reference: number | null;
   readonly camera: PlotCamera;
-}
-
-/**
- * Keeps applying data from taking a frame's time: credit stays withheld while yielding, so at most one transferable page waits on
- * the UI. A hidden tab does no such work, and cancellation always wakes it.
- */
-export class Pace {
-  #spent = 0;
-  spend(work: () => void) {
-    const started = performance.now();
-    work();
-    this.#spent += performance.now() - started;
-  }
-  async ready(signal: AbortSignal) {
-    signal.throwIfAborted();
-    if (this.#spent < 4) return;
-    await new Promise<void>((resolve, reject) => {
-      const abort = () => { cancelAnimationFrame(frame); reject(signal.reason); };
-      const frame = requestAnimationFrame(() => { signal.removeEventListener('abort', abort); resolve(); });
-      signal.addEventListener('abort', abort, { once: true });
-    });
-    this.#spent = 0;
-    signal.throwIfAborted();
-  }
 }
 
 /** Builds one update off-screen, sharing immutable history pages, while the published Data keeps its identity. History and

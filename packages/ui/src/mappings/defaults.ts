@@ -2,7 +2,7 @@ import type { ColormapNode, CustomColormap, ScaleNode, Size, Theme, Scene } from
 import { elementCatalog, portsOf, record, type CaseDocument, type ElementTarget, type FieldInfo, type Position, type SavedViews, type Space } from '@gridkit/library';
 import type { Preferences } from '../preferences/definitions.js';
 import { isDark, rgbOf } from '../ui/color.js';
-import { defaultMarks, mergeTheme, recognize, type MarkDefinition } from '../domain/views.js';
+import { defaultMarks, mergeTheme, normalizeSpace, recognize, type MarkDefinition } from '../domain/views.js';
 import { resolveMappings } from './resolve.js';
 import { untrack } from 'svelte';
 import { defaultBand, fieldOf, readings, type Measure } from '../domain/measure.js';
@@ -122,7 +122,7 @@ export function networkTheme(v: Preferences, palette: Palette = tokens, base: 'l
   return {
     base, background: v.networkBackground || palette.background,
     vertex: { color: palette.vertex, radius: 5 }, edge: { color: null, width: 1.5 },
-    line: { color: palette.line }, missing: '#808080', grid: v.networkGridColor || palette.grid, gridSpacing: v.networkGridSpacing,
+    line: { color: palette.line }, missing: '#808080', grid: { color: v.networkGridColor || palette.grid, spacing: v.networkGridSpacing },
     text: { color: v.networkTextColor || palette.text,
       font: `${v.networkFont || 'IBM Plex Sans'}, system-ui, sans-serif`, size: v.networkFontSize,
       halo: v.networkLabelHalo },
@@ -162,8 +162,8 @@ export interface MappingSource {
 
 /** The coordinate space after browser and case inheritance, shared by scene sizing and the mapping settings. */
 export function networkSpace(geographic: boolean, userDefaults: SavedViews = {}, caseOverrides: SavedViews = {}): NonNullable<Scene['space']> {
-  return (record(caseOverrides.network)?.space ?? record(userDefaults.network)?.space
-    ?? (geographic ? { earth: { projection: 'mercator' } } : 'plane')) as NonNullable<Scene['space']>;
+  return normalizeSpace(record(caseOverrides.network)?.space ?? record(userDefaults.network)?.space
+    ?? (geographic ? { earth: { projection: 'mercator' } } : 'plane'))!;
 }
 
 export function resolveNetwork({ source, preferences: v, theme = networkTheme(v), userDefaults = {}, caseOverrides = {} }: {

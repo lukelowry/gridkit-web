@@ -117,8 +117,10 @@ export function parseCase(text: string): Case {
   return freezeJson(result.data);
 }
 
-/** Validate and deep-freeze JSON at import boundaries without allocating a second tree. */
+const frozenJson = new WeakSet<object>();
+/** Validate and deep-freeze JSON once at import boundaries without allocating a second tree. */
 export function freezeJson<T>(value: T): T {
+  if (value && typeof value === 'object' && frozenJson.has(value)) return value;
   const path: (string | number)[] = [];
   const fail = (message: string): never => { throw new Error(`${path.join('.') || 'case'}: ${message}`); };
   function visit(item: unknown): void {
@@ -140,6 +142,7 @@ export function freezeJson<T>(value: T): T {
     Object.freeze(item);
   }
   visit(value);
+  if (value && typeof value === 'object') frozenJson.add(value);
   return value;
 }
 

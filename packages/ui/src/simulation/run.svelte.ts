@@ -1,10 +1,12 @@
 import { isTerminal, type Artifact, type Run, type Solver, type TimeRange } from '@gridkit/solver';
-import type { CaseDocument } from '@gridkit/library';
+import type { CaseDocument, ElementRef } from '@gridkit/library';
+import { Data, type Source } from 'latkit';
 import { percentable, type Basis, type Measure } from '../domain/measure.js';
 import { errorMessage } from '../ui/errors.js';
 import { latkit } from '../ui/latkit.js';
-import { quantitiesOf, type Quantity } from './channels.js';
-import { BranchState } from './branches.js';
+import { allSeriesLimit, channelsOf, pinnedSeriesLimit, quantitiesOf, type Quantity } from './channels.js';
+import { sameReference } from '../domain/entries.js';
+import { BranchState, branchStateDataset } from './branches.js';
 import { compile, switchable, type Channel, type SimulationEvent, type Study } from '@gridkit/library/gridkit';
 import type { SampledField } from './sampled.js';
 import { PlotFeed } from './plot-feed.svelte.js';
@@ -42,6 +44,9 @@ export class RunSession {
   live = $state(true);
   /** The quantity the plot shows; a bus quantity is the one the network reads too. */
   quantity = $state.raw<Quantity>();
+  plotMode = $state<'all' | 'focused'>('all');
+  pinned = $state.raw<readonly (ElementRef & { readonly label: string })[]>([]);
+  #selected: ElementRef | null = null;
   /** What the plot and the network show of it. */
   basis = $state<Basis>('value');
   /** The time deviations are measured from, or the first sample without one. */
@@ -61,11 +66,13 @@ export class RunSession {
   get playing() { return (this.live && this.busy) || this.playhead.playing; }
   /** The samples the network draws, once latkit has loaded; the session owns them. */
   get data() { return this.#recording?.data; }
+  get sources(): Source[] { return [...this.data ? [this.data] : [], ...this.#switching ? [this.#switching] : []]; }
   get sampledFields(): readonly SampledField[] { return this.#recording?.fields ?? []; }
   get plot() { return this.#plotFeed?.plot; }
   #execution: Run | undefined;
   #results: RunResults | undefined;
   #branches: BranchState | undefined;
+  #switching: Data | undefined;
   #observer = new Feed();
 
   constructor(client: Solver, document: CaseDocument, version: number, study: Study, carried: RunPreferences) {
@@ -87,8 +94,9 @@ export class RunSession {
       const run = this.#execution = client.start(request), results = this.#results = new RunResults(run.results());
       const parts = { results, extend: (range: TimeRange) => this.#extend(range), failed: (cause: unknown) => { this.error = errorMessage(cause); } };
       const recording = this.#recording = new Recording({ ...parts, rows: Math.ceil(tmax / dt_monitor) + 1 + 2 * events.length });
-      const plotFeed = this.#plotFeed = new PlotFeed({ ...parts, timeline: this.timeline });
-      this.#branches = new BranchState(recording.data, branches, events);
+      this.#plotFeed = new PlotFeed({ ...parts, timeline: this.timeline });
+      this.#switching = new Data(branchStateDataset);
+      this.#branches = new BranchState(this.#switching, branches, events);
       void run.artifacts.then(artifacts => { this.artifacts = artifacts; }, () => {});
       for await (const update of run.updates(signal)) {
         signal.throwIfAborted();
@@ -104,7 +112,8 @@ export class RunSession {
         this.quantity = voltage ?? this.quantities[0];
         this.#busQuantity = voltage;
         recording.start(this.channels, this.reference);
-        if (this.quantity) plotFeed.show(this.quantity, this.basis, this.reference);
+        if (this.quantity && this.quantity.channels.length > allSeriesLimit) this.plotMode = 'focused';
+        this.#showPlot();
       }
     }, cause => { this.error = errorMessage(cause); this.failed = true; this.busy = false; this.playhead.pause(); });
   }
@@ -117,15 +126,45 @@ export class RunSession {
   /** Installs the sampled fields the network's scene reads. */
   sample(fields: readonly SampledField[]) { this.#recording?.want(fields); }
 
+  focusPlot(selected: ElementRef | null) {
+    if (sameReference(selected, this.#selected)) return;
+    this.#selected = selected;
+    if (this.plotMode === 'focused') this.#showPlot();
+  }
+  setPlotMode(mode: 'all' | 'focused') {
+    if (mode === 'all' && (this.quantity?.channels.length ?? 0) > allSeriesLimit) return;
+    if (mode === this.plotMode) return;
+    this.plotMode = mode; this.#showPlot();
+  }
+  pinPlot(selected: ElementRef) {
+    const channel = this.quantity && channelsOf(this.quantity, [selected])[0];
+    if (!channel || this.pinned.length >= pinnedSeriesLimit || this.pinned.some(ref => sameReference(ref, selected))) return;
+    this.pinned = [...this.pinned, { ...selected, label: `${channel.class ?? 'Bus'} ${channel.label}` }];
+    this.plotMode = 'focused'; this.#showPlot();
+  }
+  unpinPlot(selected: ElementRef) {
+    this.pinned = this.pinned.filter(ref => !sameReference(ref, selected));
+    if (this.plotMode === 'focused') this.#showPlot();
+  }
+  #showPlot() {
+    const quantity = this.quantity;
+    if (!quantity) return;
+    const channels = this.plotMode === 'all' ? quantity.channels : channelsOf(quantity, [...this.pinned, ...this.#selected ? [this.#selected] : []]);
+    if (!channels.length) { this.#plotFeed?.clear(); return; }
+    const shown = this.plotMode === 'all' ? quantity : { ...quantity, channels };
+    this.#plotFeed?.show(shown, this.basis, this.reference);
+  }
+
   /** Plots `key`'s quantity; a bus quantity also becomes what the network shows. */
   select(key: string) {
     const quantity = this.quantities.find(quantity => quantity.key === key);
     if (!quantity || quantity === this.quantity) return;
     this.quantity = quantity;
+    if (quantity.channels.length > allSeriesLimit) this.plotMode = 'focused';
     if (quantity.channels[0]?.element.collection === 'buses') this.#busQuantity = quantity;
     if (this.basis === 'percent' && !percentable(quantity.unit)) this.basis = 'change';
     this.band = null;
-    this.#plotFeed?.show(quantity, this.basis, this.reference);
+    this.#showPlot();
   }
 
   /**
@@ -138,7 +177,7 @@ export class RunSession {
     if (basis !== this.basis) this.band = null;
     this.basis = basis; this.reference = reference;
     if (moved) this.#recording?.measureFrom(reference);
-    if (this.quantity) this.#plotFeed?.show(this.quantity, basis, reference);
+    this.#showPlot();
   }
 
   viewport(viewport: PlotViewport, pixels: number, manual = false) { this.#plotFeed?.viewport(viewport, pixels, manual); }
@@ -179,6 +218,7 @@ export class RunSession {
     this.busy = false;
     this.#recording?.close();
     this.#plotFeed?.close();
+    this.#switching?.destroy();
     this.#results?.close();
   }
 

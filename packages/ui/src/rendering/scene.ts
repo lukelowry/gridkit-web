@@ -6,8 +6,8 @@ import type { PreferencesState } from '../preferences/state.svelte.js';
 import { legible, rgbOf } from '../ui/color.js';
 import { gesturesOf } from '../ui/latkit.js';
 import { dataset, tableOf } from './data.js';
-import { branchStateTable } from '../simulation/branches.js';
-import { simulationDataset, simulationFields, simulationOption, type SampledField } from '../simulation/sampled.js';
+import { branchStateDataset, branchStateTable } from '../simulation/branches.js';
+import { simulationFields, simulationOption, type SampledField } from '../simulation/sampled.js';
 import type { Measure } from '../domain/measure.js';
 
 /** The space a scene draws in, by name; the earth's by projection. */
@@ -75,7 +75,7 @@ export function networkScene({ document, preferences, palette, mappings, geograp
     // While results play, a branch out of service draws dashed and muted in the same mark, so its hover and selection stay.
     // In service it keeps no color of its own, so it blends its ends' colors as it does without results.
     if (simulation && table === 'Branch' && mark.kind === 'edges') {
-      const open = field('inService').from([simulationDataset, branchStateTable]).gt(0).not();
+      const open = field('inService').from([branchStateDataset, branchStateTable]).gt(0).not();
       const [r, g, b] = rgbOf(legible([String(resolved.theme.line?.color ?? '#808080')], grounds, floor)[0]!) ?? [128, 128, 128];
       Object.assign(base, { dash: open.or((options.dash ?? false) as ExprInput),
         color: when(open).then(`rgba(${r},${g},${b},0.7)`).otherwise((options.color ?? null) as ExprInput) });
@@ -85,8 +85,8 @@ export function networkScene({ document, preferences, palette, mappings, geograp
   }
   const missing = legible([String(resolved.theme.missing)], grounds, floor)[0]!;
   const scene: Scene = {
-    space: earthSpace(resolved.space) ? { earth: { projection: globe ? 'globe' : 'mercator', graticule: v.networkGrid, atmosphere: v.networkAtmosphere } }
-      : { plane: { grid: v.networkGrid ? { lines: { pitch: 10 } } : 'off' } },
+    space: earthSpace(resolved.space) ? { earth: { projection: globe ? 'globe' : 'mercator', grid: v.networkGrid ? 'lines' : 'off', atmosphere: v.networkAtmosphere } }
+      : { plane: { grid: v.networkGrid ? { lines: { step: 10 } } : 'off' } },
     marks, theme: { ...resolved.theme, missing, contrast: floor },
     // A network lays out only the buses its case does not place.
     layout: drawing.placed ? 'none' : 'stress',

@@ -2,6 +2,7 @@ import type { Data } from 'latkit';
 import type { SimulationEvent } from '@gridkit/library/gridkit';
 
 export const branchStateTable = 'BranchState';
+export const branchStateDataset = 'switching';
 
 /** Switching state from the submitted study, keyed by the case snapshot's element IDs. */
 export class BranchState {

@@ -4,7 +4,9 @@ import { Data, load, Patch } from 'latkit';
 import type { ResultReader, RowsQuery, RunState, Samples, SummaryQuery, SummaryReply, Tile } from '@gridkit/solver';
 import { PlotBuffer } from './plot.js';
 import { RunResults, type ResultsMessage, type ResultsReply } from './results.js';
-import { addTile, NetworkPacker, networkPages, packPlot, plotPages, ResultHost, type NetworkFeed, type PlotFeedRequest, type PlotPage } from './results.worker.js';
+import { addTile, networkPages, packPlot, plotPages, ResultHost, type NetworkFeed, type PlotFeedRequest, type PlotPage } from './results.worker.js';
+import { networkPlan } from './recording-plan.js';
+import { RecordingBuffer } from './recording-buffer.js';
 
 beforeAll(async () => { await load({ wasm: await WebAssembly.compile(new Uint8Array(await readFile(new URL(import.meta.resolve('latkit/wasm'))))) }); });
 afterEach(() => vi.unstubAllGlobals());
@@ -26,7 +28,7 @@ class WorkerStub {
   }
 }
 const flush = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); };
-const feed: NetworkFeed = { kind: 'network', channels: [], every: 1, maxBytes: 4096 };
+const feed: NetworkFeed = { kind: 'network', plan: networkPlan([]), every: 1, maxBytes: 4096 };
 function facade() {
   vi.stubGlobal('Worker', WorkerStub);
   const { port1 } = new MessageChannel();
@@ -112,46 +114,72 @@ it('reads the network from its first row to the run\'s last, resetting only at t
     { rows: 4, state: 'completed' as RunState, range: [0, 3] as const, samples: samples(4, []) },
   ];
   const rows = vi.fn(async (_query: RowsQuery) => replies.shift()!);
-  const pages = await drain(networkPages(readerOf({ rows }), { ...feed, channels: bus, maxBytes: 64 }, new AbortController().signal));
+  const pages = await drain(networkPages(readerOf({ rows }), { ...feed, plan: networkPlan(bus), maxBytes: 64 }, new AbortController().signal));
   expect(rows.mock.calls.map(([query]) => [query.from, query.wait, query.every, query.maxBytes])).toEqual([[0, true, 1, 64], [3, true, 1, 64], [4, true, 1, 64]]);
-  const data = new Data('simulation');
+  const data = new Data('simulation'), buffer = new RecordingBuffer(data);
   try {
-    for (const page of pages) data.apply(page.bytes);
-    expect(pages).toHaveLength(2);
+    for (const page of pages) buffer.apply(page);
+    expect(pages.filter(page => page.complete)).toHaveLength(2);
     expect(data.describe().span).toEqual([0, 3]);
-    expect(data.get('buses', 'bus', 'Vm', { at: 2 })).toBe(2);
-    expect(data.get('buses', 'bus', 'Vm', { at: 3 })).toBe(3);
-  } finally { data.destroy(); }
+    expect(data.get('Bus', 'bus', 'Vm', { at: 2 })).toBe(2);
+    expect(data.get('Bus', 'bus', 'Vm', { at: 3 })).toBe(3);
+  } finally { buffer.destroy(); data.destroy(); }
 });
 
 it('steps by every Nth row, where the whole run would not fit', async () => {
   const replies = [{ ...revision, rows: 7, samples: samples(0, [0, 3]) }, { ...revision, rows: 7, state: 'completed' as RunState, samples: samples(6, [6]) }];
   const rows = vi.fn(async (_query: RowsQuery) => replies.shift()!);
-  await drain(networkPages(readerOf({ rows }), { ...feed, channels: bus, every: 3 }, new AbortController().signal));
+  await drain(networkPages(readerOf({ rows }), { ...feed, plan: networkPlan(bus), every: 3 }, new AbortController().signal));
   expect(rows.mock.calls.map(([query]) => query.from)).toEqual([0, 6]);
 });
 
-it('installs each output as recorded, one field per output however many elements record it', () => {
+it('installs each output as recorded, one field per output however many elements record it', async () => {
   const both = [...bus, { column: 'w', element: { collection: 'buses' as const, id: 'other' }, output: 'Vm', label: 'Other', unit: 'p.u.' }];
-  const packer = new NetworkPacker(both), data = new Data('simulation');
+  const data = new Data('simulation'), buffer = new RecordingBuffer(data);
   try {
-    data.apply(packer.pack(samples(0, [0, 1], [1, 2, 0.75, 1.5], ['v', 'w']), true));
+    const rows = async () => ({ rows: 2, state: 'completed' as const, range: [0, 1] as const, samples: samples(0, [0, 1], [1, 2, 0.75, 1.5], ['v', 'w']) });
+    for await (const page of networkPages(readerOf({ rows }), { ...feed, plan: networkPlan(both) }, new AbortController().signal)) buffer.apply(page);
     expect(data.describe().tables[0]!.fields.map(field => field.name)).toEqual(['Vm']);
-    expect(data.get('buses', 'bus', 'Vm', { at: 1 })).toBe(0.75);
-    expect(data.get('buses', 'other', 'Vm', { at: 1 })).toBe(1.5);
-  } finally { data.destroy(); }
+    expect(data.get('Bus', 'bus', 'Vm', { at: 1 })).toBe(0.75);
+    expect(data.get('Bus', 'other', 'Vm', { at: 1 })).toBe(1.5);
+  } finally { buffer.destroy(); data.destroy(); }
 });
 
-it('joins reordered channels by identity, keeping equal-time event rows', () => {
+it('joins reordered channels by identity, keeping equal-time event rows', async () => {
   const network = ['b', 'a'].map((id, index) => ({ column: String(index), element: { collection: 'buses' as const, id }, output: 'Vm', label: id, unit: 'p.u.' }));
-  const packer = new NetworkPacker(network), data = new Data('simulation');
+  const data = new Data('simulation'), buffer = new RecordingBuffer(data);
   try {
-    data.apply(packer.pack(samples(0, [0, 1], [1, 10, 2, 20], ['0', '1']), true));
-    data.apply(packer.pack(samples(2, [1, 2], [4, 40, 3, 30], ['0', '1']), false));
-    expect(data.get('buses', 'a', 'Vm', { at: 1 })).toBe(40);
-    expect(data.get('buses', 'b', 'Vm', { at: 2 })).toBe(3);
-    expect(data.get('buses', 'a', 'Vm', { at: 0 })).toBe(10);
-  } finally { data.destroy(); }
+    const blocks = [samples(0, [0, 1], [1, 10, 2, 20], ['0', '1']), samples(2, [1, 2], [4, 40, 3, 30], ['0', '1'])];
+    const rows = async () => ({ rows: 4, state: 'completed' as const, range: [0, 2] as const, samples: blocks.shift()! });
+    for await (const page of networkPages(readerOf({ rows }), { ...feed, plan: networkPlan(network) }, new AbortController().signal)) buffer.apply(page);
+    expect(data.get('Bus', 'a', 'Vm', { at: 1 })).toBe(40);
+    expect(data.get('Bus', 'b', 'Vm', { at: 2 })).toBe(3);
+    expect(data.get('Bus', 'a', 'Vm', { at: 0 })).toBe(10);
+  } finally { buffer.destroy(); data.destroy(); }
+});
+
+it('shards wide reads and transfers, publishes whole revisions, and preserves equal-time samples', async () => {
+  const channels = Array.from({ length: 20 }, (_, i) => ({ ...bus[0]!, column: String(i), element: { collection: 'buses' as const, id: `b${i}` } }));
+  const times = [0, 1, 1], queries: RowsQuery[] = [];
+  const reader = readerOf({ rows: async query => {
+    queries.push(query);
+    const first = query.from ?? 0, count = Math.min(query.count ?? 3, Math.floor(query.maxBytes / (8 * (query.columns.length + 1))), times.length - first);
+    return { rows: 3, state: 'completed', range: [0, 1], samples: samples(first, times.slice(first, first + count),
+      Array.from({ length: count * query.columns.length }, (_, index) => (first + Math.floor(index / query.columns.length)) * 100 + Number(query.columns[index % query.columns.length])), [...query.columns]) };
+  } });
+  const data = new Data('simulation'), buffer = new RecordingBuffer(data);
+  let commits = 0;
+  try {
+    for await (const page of networkPages(reader, { ...feed, plan: networkPlan(channels), maxBytes: 64 }, new AbortController().signal)) {
+      expect(page.bytes.byteLength).toBeLessThanOrEqual(64);
+      buffer.apply(page);
+      if (page.complete) commits++;
+      expect(data.get('Bus', 'b19', 'Vm', { at: 1 })).toBe(commits ? (commits - 1) * 100 + 19 : null);
+    }
+    expect(commits).toBe(3);
+    expect(data.get('Bus', 'b19', 'Vm', { at: 1 })).toBe(219);
+    expect(queries.every(query => query.columns.length <= 7)).toBe(true);
+  } finally { buffer.destroy(); data.destroy(); }
 });
 
 const plot: PlotFeedRequest = { kind: 'plot', columns: ['v'], basis: 'value', reference: null, range: [0, 8], resolution: 32, maxBytes: 4096 };
@@ -203,7 +231,7 @@ it('reads the reference once, at its time, then shows each trace from it', async
 it('serves a run\'s feeds side by side, stops each alone, and lets the run\'s port go', async () => {
   const signals: AbortSignal[] = [], close = vi.fn();
   const reader = readerOf({ close, rows: async (_query, signal) => { signals.push(signal!); return new Promise((_, reject) => signal!.addEventListener('abort', () => reject(signal!.reason))); } });
-  const host = new ResultHost(() => reader), network = { ...feed, channels: bus }, { port1 } = new MessageChannel();
+  const host = new ResultHost(() => reader), network = { ...feed, plan: networkPlan(bus) }, { port1 } = new MessageChannel();
   await host.handle({ kind: 'open', port: port1 });
   await host.handle({ kind: 'follow', feed: 0, request: network });
   await host.handle({ kind: 'follow', feed: 1, request: network });

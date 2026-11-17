@@ -41,13 +41,13 @@ it('draws branches out of service dashed and muted in their own mark, under a ma
 it('draws mappings over the catalog structure, with preferences as theme, controls, and layout', () => {
   const document = new CaseDocument(fixture());
   const network = scene(document);
-  expect(network.scene.space).toEqual({ earth: { projection: 'mercator', graticule: true, atmosphere: false } });
+  expect(network.scene.space).toEqual({ earth: { projection: 'mercator', grid: 'lines', atmosphere: false } });
   expect(mark(network, 'buses')).toMatchObject({
     vertices: ['case', 'Bus'], position: ['$placement.geographic.longitude', '$placement.geographic.latitude'], color: level,
   });
   expect(mark(network, 'branches')).toMatchObject({ edges: ['case', 'Branch'], ends: ['ports.bus1', 'ports.bus2'] });
   expect(network.scene.theme).toMatchObject({ edge: { color: null } });
-  expect(network.scene.theme).toHaveProperty('gridSpacing', 24);
+  expect(network.scene.theme).toHaveProperty('grid.spacing', 24);
   expect(network.scene.controls).toEqual({ gestures: { twist: 'turn', slide: 'tilt' }, keyboard: true, hover: true, pickRadius: 6, cycle: false, motion: 'full' });
   // With zoom on Ctrl or Cmd, the wheel scrolls the view, as a trackpad does.
   const modifier = scene(document, createPreferences(JSON.stringify({ wheel: 'modifier' })));
@@ -99,7 +99,7 @@ it('applies browser mappings and interaction preferences to the Network', () => 
   const network = scene(document, preferences);
   expect(mark(network, 'buses')).toMatchObject({ marker: 'diamond', radius: { scale: [3, 10], value: '$init.Vr' }, label: null });
   expect(network.scene.controls).toMatchObject({ pickRadius: 15 });
-  expect(network.scene.theme).toHaveProperty('gridSpacing', 64);
+  expect(network.scene.theme).toHaveProperty('grid.spacing', 64);
 });
 
 it('labels numeric fields as latkit writes numbers, and shows a bus class mark only for its rows', () => {
@@ -161,7 +161,7 @@ it('draws geography under the case and applies the globe, grid, and pole choices
   const document = new CaseDocument(fixture()), preferences = createPreferences(JSON.stringify({ networkGrid: false, networkPoles: true }));
   const geography = [['geography-0', 'polygons'], ['geography-1', 'lines']] as const;
   const network = networkScene({ document, preferences, mappings: {}, geographic: true, globe: true, geography });
-  expect(network.scene.space).toEqual({ earth: { projection: 'globe', graticule: false, atmosphere: false } });
+  expect(network.scene.space).toEqual({ earth: { projection: 'globe', grid: 'off', atmosphere: false } });
   expect(network.scene.marks!.slice(0, 2)).toEqual(geography.map(table => ({ lines: table, width: 1, pick: false })));
   expect(network.scene.theme).toMatchObject({ line: { color: 'var(--color-graph-line)' } });
   // Poles rise from the ground under the case's marks.
@@ -226,7 +226,7 @@ it('keeps the color of a missing value at the floor every colormap keeps', () =>
 it('applies Network atmosphere and selection preferences', () => {
   const preferences = createPreferences(JSON.stringify({ networkAtmosphere: true, cycle: true }));
   const network = scene(new CaseDocument(fixture()), preferences);
-  expect(network.scene.space).toEqual({ earth: { projection: 'mercator', graticule: true, atmosphere: true } });
+  expect(network.scene.space).toEqual({ earth: { projection: 'mercator', grid: 'lines', atmosphere: true } });
   expect(network.scene.controls).toMatchObject({ cycle: true });
 });
 

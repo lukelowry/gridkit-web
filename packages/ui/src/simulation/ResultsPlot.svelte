@@ -56,7 +56,7 @@
     // The dock names the quantity, units, and time; the canvas keeps only the numeric axes.
     space: { plot: { x: { label: null }, y: { label: null } } },
     // Traces keep 4.5:1 contrast with the plot's ground, or 7:1 in high contrast.
-    theme: { base: preferences.theme, background: palette.bg, grid: palette.grid, contrast: preferences.contrast === 'high' ? 7 : 4.5,
+    theme: { base: preferences.theme, background: palette.bg, grid: { color: palette.grid }, contrast: preferences.contrast === 'high' ? 7 : 4.5,
       focus: { hover: palette.hover, selected: palette.selected },
       text: { color: palette.ticks, ...typography }, plot: { playhead: palette.text } },
     marks: [{ lines: ['simulation-plot', 'Trace'], trace: 'value', interpolation: 'linear',
@@ -92,12 +92,16 @@
       if (!start || !end) return;
       const axis = { left: start[0], width: end[0] - start[0], from: camera.x[0], to: camera.x[1] }, key = JSON.stringify(axis);
       if (key !== measured) { measured = key; onaxis(axis); }
+      return axis;
     };
     const report = (manual = false) => {
-      measure();
+      const axis = measure();
       if (disposed || !live) return;
       const camera = live.camera;
-      if ('x' in camera) onviewport({ x: [...camera.x], y: camera.y ? [...camera.y] : null }, canvas.width, manual);
+      if ('x' in camera) {
+        const pixels = axis && canvas.clientWidth ? axis.width * canvas.width / canvas.clientWidth : canvas.width;
+        onviewport({ x: [...camera.x], y: camera.y ? [...camera.y] : null }, pixels, manual);
+      }
     };
     const afterResize = () => {
       stopResize?.(); stopResize = undefined;

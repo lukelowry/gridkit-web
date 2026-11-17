@@ -91,7 +91,7 @@ function inbox<T>(signal: AbortSignal) {
   };
 }
 
-async function setup(fixture: unknown) {
+async function setup(fixture: unknown, focused = false) {
   vi.stubGlobal('Worker', WorkerStub);
   vi.stubGlobal('requestAnimationFrame', () => 1); vi.stubGlobal('cancelAnimationFrame', () => {});
   let now = 0, value = 1, state: RunState = 'running';
@@ -143,7 +143,7 @@ async function setup(fixture: unknown) {
   const study = { ...defaultStudy(), tmax: 20 };
   const runs = [simulation.start(document, 0, study)];
   cleanup = async () => { simulation.close(); await Promise.all(runs); };
-  await vi.waitFor(() => expect(simulation.run!.plot).toBeDefined());
+  await vi.waitFor(() => expect(focused ? simulation.run!.quantity : simulation.run!.plot).toBeDefined());
   return {
     simulation, study, rows, summaries, rowsCalls: () => rows.mock.calls.length,
     advance(time: number, next: number, nextValue = value, nextState: RunUpdate['state'] & RunState = 'running') {
@@ -201,7 +201,7 @@ for (const fixture of [ieee39, wecc240]) {
     }
     await new Promise(resolve => setTimeout(resolve, 60));
     expect(rowsCalls()).toBe(asked);
-    expect(run.data!.get('buses', simulationRow(run), 'Vm', { at: 2 })).toBe(1);
+    expect(run.data!.get('Bus', simulationRow(run), 'Vm', { at: 2 })).toBe(1);
     expect(run.live).toBe(false);
   });
 
@@ -209,14 +209,14 @@ for (const fixture of [ieee39, wecc240]) {
     const { simulation, advance, rows } = await setup(fixture);
     const run = simulation.run!, id = simulationRow(run), from = referenceField('Vm');
     // Without a reference, deviations are measured from the first sample.
-    await vi.waitFor(() => expect(run.data!.get('buses', id, from)).toBe(1));
+    await vi.waitFor(() => expect(run.data!.get('Bus', id, from)).toBe(1));
     advance(100, 2, 3);
     await vi.waitFor(() => expect(run.data!.describe().span?.[1]).toBe(2));
     const restarts = () => rows.mock.calls.filter(([query]) => query.at === undefined && !query.from).length, before = restarts();
     run.measure('change', 2);
-    expect(run.data!.get('buses', id, from)).toBe(3);
+    expect(run.data!.get('Bus', id, from)).toBe(3);
     run.measure('change', null);
-    expect(run.data!.get('buses', id, from)).toBe(1);
+    expect(run.data!.get('Bus', id, from)).toBe(1);
     expect(restarts()).toBe(before);
   });
 
@@ -276,6 +276,7 @@ for (const fixture of [ieee39, wecc240]) {
     run.sample([{ collection: 'buses', field: 'Va~change' }]);
     await vi.waitFor(() => expect(run.sampledFields.some(field => field.field === 'Va')).toBe(true));
     expect(run.sampledFields.some(field => field.field === 'Vm')).toBe(false);
+    expect(run.data!.get('Bus', simulationRow(run), 'Vm')).toBeNull();
     run.measure('value', null);
 
     // The submitted output interval sets what is held, even after settings are edited.
@@ -283,6 +284,29 @@ for (const fixture of [ieee39, wecc240]) {
     expect(run.timeline).toEqual([0, 20]);
   });
 }
+
+it('focuses large quantities explicitly, pins comparisons, and keeps network playback independent', async () => {
+  const value = { ...ieee39, buses: [...ieee39.buses, ...Array.from({ length: 513 - ieee39.buses.length }, (_, i) => ({ ...ieee39.buses[0]!, number: 10_000 + i }))] };
+  const { simulation, summaries } = await setup(value, true), run = simulation.run!;
+  expect(run.plotMode).toBe('focused');
+  expect(run.plot).toBeUndefined();
+  expect(summaries).toHaveLength(0);
+  const [first, second] = run.quantity!.channels;
+  run.focusPlot(first!.element);
+  await vi.waitFor(() => expect(run.plot?.quantity.channels).toEqual([first]));
+  run.pinPlot(first!.element);
+  run.focusPlot(second!.element);
+  await vi.waitFor(() => expect(run.plot?.quantity.channels).toEqual([first, second]));
+  run.setPlotMode('all');
+  expect(run.plotMode).toBe('focused');
+  run.unpinPlot(first!.element);
+  await vi.waitFor(() => expect(run.plot?.quantity.channels).toEqual([second]));
+  run.focusPlot(null);
+  expect(run.plot).toBeUndefined();
+  await vi.waitFor(() => expect(run.data!.get('Bus', first!.element.id, 'Vm', { at: 1 })).toBe(1));
+  run.seek(0.5);
+  expect(run.playhead.time).toBe(0.5);
+});
 
 function simulationRow(run: { channels: readonly { output: string; element: { id: string } }[] }) {
   return run.channels.find(channel => channel.output === 'Vm')!.element.id;

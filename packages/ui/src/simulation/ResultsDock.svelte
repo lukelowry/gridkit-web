@@ -9,6 +9,8 @@
   import { save } from '../ui/files.js';
   import { eventActions } from './solver-fields.js';
   import { speeds } from './playhead.svelte.js';
+  import { allSeriesLimit, channelsOf, pinnedSeriesLimit } from './channels.js';
+  import { sameReference } from '../domain/entries.js';
   import { defaultBand, measureUnit, percentable } from '../domain/measure.js';
   import { rampCss, scaleTicks, type ColorScale } from '../ui/ramps.js';
   import { notify } from '../ui/toasts.svelte.js';
@@ -51,8 +53,11 @@
   const seconds = (at: number) => at.toFixed(2);
   const deviating = $derived(run.basis !== 'value');
   const measuredFrom = $derived(run.reference ?? run.range[0]);
-  const unit = $derived(plot?.quantity.unit);
-  const displayUnit = $derived(plot ? measureUnit(unit, plot.basis) : '');
+  const unit = $derived(run.quantity?.unit);
+  const displayUnit = $derived(run.quantity ? measureUnit(unit, run.basis) : '');
+  const selectedChannel = $derived(run.quantity && selected ? channelsOf(run.quantity, [selected])[0] : undefined);
+  const canPin = $derived(!!selectedChannel && run.pinned.length < pinnedSeriesLimit && !run.pinned.some(ref => sameReference(ref, selected)));
+  $effect(() => { const session = run, ref = selected; untrack(() => session.focusPlot(ref)); });
   const scopes = $derived([...new Set(run.quantities.map(quantity => quantity.scope))]);
   const contentId = $props.id();
   let plotAttempt = $state(0);
@@ -77,8 +82,8 @@
 <section class={['results-dock', side]} aria-label="Simulation">
   <div class="results-toolbar">
     <div class="results-measure">
-      <select class="results-quantity" aria-label="Plot quantity" title={plot?.quantity.label}
-        disabled={!run.quantities.length} value={plot?.quantity.key ?? ''}
+      <select class="results-quantity" aria-label="Plot quantity" title={run.quantity?.label}
+        disabled={!run.quantities.length} value={run.quantity?.key ?? ''}
         onchange={event => run.select(event.currentTarget.value)}>
         <button type="button"><selectedcontent></selectedcontent></button>
         {#if !run.quantities.length}<option value="">{run.busy ? 'Preparing results…' : 'No quantities'}</option>{/if}
@@ -96,7 +101,7 @@
       <Popover label="Plot options" width={256} align="end">
         {#snippet trigger(popup)}<button class="c-icon-btn" aria-label="Plot options" title="Plot options" aria-haspopup="dialog" popovertarget={popup}><Icon name="more" /></button>{/snippet}
         {#snippet children(close)}
-          <fieldset class="c-options" disabled={!plot}>
+          <fieldset class="c-options" disabled={!run.quantity}>
             <legend>Display</legend>
             {#each [{ value: 'value', label: 'Value' }, { value: 'change', label: 'Change' }, { value: 'percent', label: 'Percent change' }] as choice (choice.value)}
               <label class="c-action" title={choice.value === 'percent' && !percentable(unit) ? 'Percent change is unavailable for angles.' : undefined}>
@@ -106,15 +111,30 @@
               </label>
             {/each}
           </fieldset>
+          <fieldset class="c-options" disabled={!run.quantity}>
+            <legend>Series</legend>
+            <label class="c-action" title={`All-series plots support up to ${allSeriesLimit} series. Select and pin elements for larger quantities.`}>
+              <input type="radio" name={`${contentId}-series`} checked={run.plotMode === 'all'}
+                disabled={(run.quantity?.channels.length ?? 0) > allSeriesLimit} onchange={() => run.setPlotMode('all')} />
+              All series ({run.quantity?.channels.length ?? 0})
+            </label>
+            <label class="c-action"><input type="radio" name={`${contentId}-series`} checked={run.plotMode === 'focused'}
+              onchange={() => run.setPlotMode('focused')} />Selected and pinned</label>
+            <button class="c-action" type="button" disabled={!canPin} title={`Pin up to ${pinnedSeriesLimit} elements to compare their traces.`}
+              onclick={() => { if (selected) run.pinPlot(selected); }}>Pin selected element</button>
+            {#each run.pinned as ref (ref.id)}
+              <button class="c-action" type="button" aria-label={`Unpin ${ref.label}`} onclick={() => run.unpinPlot(ref)}><Icon name="close" />{ref.label}</button>
+            {/each}
+          </fieldset>
           {#if deviating}
             <div class="c-options" role="group" aria-label="Reference">
               <span class="c-options__label">Reference · {seconds(measuredFrom)} s</span>
               <button class="c-action" type="button" disabled={run.reference === null} onclick={() => { close(); run.measure(run.basis, null); }}><Icon name="reference" />From start</button>
-              <button class="c-action" type="button" disabled={!plot} onclick={() => { close(); run.measure(run.basis, run.playhead.time); }}><Icon name="reference" />From current time</button>
+              <button class="c-action" type="button" disabled={!run.recorded} onclick={() => { close(); run.measure(run.basis, run.playhead.time); }}><Icon name="reference" />From current time</button>
             </div>
           {/if}
           <div class="c-options">
-            <button class="c-action" type="button" disabled={!plot || run.live} onclick={() => { close(); run.follow(); }}><Icon name="play" />Follow live</button>
+            <button class="c-action" type="button" disabled={!run.recorded || run.live} onclick={() => { close(); run.follow(); }}><Icon name="play" />Follow live</button>
             <button class="c-action" type="button" disabled={!plot} onclick={() => { close(); run.fit(); }}><Icon name="fit" />Fit plot</button>
           </div>
           {#if scale}
@@ -158,13 +178,18 @@
   <div id={contentId} class="results-content" hidden={collapsed && side === 'bottom'}>
     <!-- Controls stay visible while the plot uses the remaining height. -->
     <div class="results-body">
+      {#if run.plotMode === 'focused' && run.quantity}
+        <p class="series-count" role="status">{plot?.quantity.channels.length ?? 0} of {run.quantity.channels.length} series · selected and pinned</p>
+      {/if}
       {#if plot}
         {#key plot.data}{#key plotAttempt}
           <ResultsPlot bind:this={plotView} {selected} {hovered} {onselect} {onhover} ondetail={next => { detail = next; }} {plot} playhead={run.playhead} {preferences} onretry={retryPlot}
             onseek={at => run.seek(at)} onviewport={(viewport, pixels, manual) => run.viewport(viewport, pixels, manual)} onaxis={next => { measured = next; }} />
         {/key}{/key}
       {:else}
-        <p class="results-empty" role="status">{run.busy ? 'Preparing results…' : 'No simulation results.'}</p>
+        <p class="results-empty" role="status">{run.plotMode === 'focused' && run.quantity
+          ? 'Select an element in Network or Table to plot it. Pin selections in Plot options to compare.'
+          : run.busy ? 'Preparing results…' : 'No simulation results.'}</p>
       {/if}
     </div>
     <!-- The measured plot axis owns the rail; controls never shorten or offset its domain. -->
@@ -178,7 +203,7 @@
         <div class="scrubber__marks" aria-hidden="true">
           {#each marks as event, index (index)}<span style:left={percent(event.time)} title={`${eventActions[event.type].label} at ${event.time} s`}></span>{/each}
         </div>
-        <input bind:this={scrubber} aria-label="Simulation time" aria-valuetext={`${seconds(time)} seconds`} type="range" step="any" disabled={!plot} oninput={event => {
+        <input bind:this={scrubber} aria-label="Simulation time" aria-valuetext={`${seconds(time)} seconds`} type="range" step="any" disabled={!run.recorded} oninput={event => {
           const input = event.currentTarget;
           const at = Math.max(run.range[0], Math.min(run.range[1], input.valueAsNumber));
           input.valueAsNumber = at;
@@ -188,11 +213,11 @@
     </div>
     <div class="playback">
       <button class="c-icon-btn" aria-label={run.playing ? 'Pause' : 'Play'} title={run.playing ? 'Pause' : 'Play'}
-        disabled={!plot || run.range[0] === run.range[1]} onclick={() => run.play(!run.playing)}><Icon name={run.playing ? 'pause' : 'play'} /></button>
+        disabled={!run.recorded} onclick={() => run.play(!run.playing)}><Icon name={run.playing ? 'pause' : 'play'} /></button>
       <div class="playback-meta">
         <output class="time" aria-label="Current simulation time" aria-live="off"><span class="time-label">Time</span> {seconds(time)}<span class="time-duration"> / {seconds(run.timeline[1])}</span> <span>s</span></output>
         <output class="trace-detail" aria-label="Hovered series" aria-live="off" title={detail ? [detail.label, detail.value, detail.at].filter(Boolean).join(' / ') : undefined}><bdi>{detail?.label ?? ''}</bdi> <span>{detail?.value ?? ''}</span> <span>{detail?.at ?? ''}</span></output>
-        <select class="speed" aria-label="Playback speed" bind:value={run.playhead.speed} disabled={!plot || run.live}>
+        <select class="speed" aria-label="Playback speed" bind:value={run.playhead.speed} disabled={!run.recorded || run.live}>
           <button type="button"><selectedcontent></selectedcontent></button>
           {#each speeds as speed (speed)}<option value={speed}>{speed}×</option>{/each}
         </select>
@@ -211,7 +236,9 @@
   .results-quantity { flex: 1; width: 0; max-width: 18rem; min-width: 0; text-overflow: ellipsis; white-space: nowrap; }
   .results-unit { flex: none; color: var(--color-text-3); font: var(--type-caption); white-space: nowrap; }
   .results-content { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; border-top: 1px solid var(--color-divider); }
-  .results-body { flex: 1; min-height: 0; overflow: hidden; }
+  .results-body { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+  .series-count { flex: none; margin: 0; padding: var(--spacing-2xs) var(--spacing-sm); color: var(--color-text-2); font: var(--type-caption); }
+  .results-body :global(.plot-canvas) { flex: 1; }
   select { width: auto; min-height: var(--control-height); border-color: transparent; background-color: transparent; padding-block: var(--spacing-2xs); }
   /* What the network's colors mean, in the options, opening them above the commands. */
   .color-scale { display: grid; gap: var(--spacing-xs); padding: var(--spacing-sm); border-bottom: 1px solid var(--color-border); }
