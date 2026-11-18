@@ -14,7 +14,11 @@ export type RunId = string;
 /** A study for GridKit: its settings and its native model, compiled by whoever asks. The solver chooses where its files go. */
 export interface RunRequest { readonly study: object; readonly model: Blob }
 
+/** Versions of the solver's GridKit build, by component; empty if unknown. */
+export type Engine = Readonly<Record<string, string>>;
+
 export interface Solver {
+  readonly engine: Engine;
   /** Starts a study and answers at once; the upload, or the start, happens behind it. */
   start(request: RunRequest): Run;
   /** Stops the solver, ending every run it follows and what it holds. */

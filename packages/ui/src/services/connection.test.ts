@@ -83,6 +83,23 @@ it('retries a failed connection, waiting longer each time, until it answers', as
   expect(open).toHaveBeenCalledTimes(4);
 });
 
+it('does not ask again what the browser cannot do, until the user does', async () => {
+  vi.useFakeTimers();
+  const unsupported = Object.assign(new Error('This browser cannot keep simulation results on disk.'), { code: 'unsupported' });
+  const open = vi.fn<() => Promise<object | null>>().mockRejectedValue(unsupported);
+  const service = new Connection(open);
+  await service.connect();
+  expect(service.status).toBe('unreachable');
+  expect(service.error).toBe(unsupported.message);
+  service.recover();
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(open).toHaveBeenCalledOnce();
+  // A user retry still connects.
+  open.mockResolvedValue({});
+  await service.connect();
+  expect(service.status).toBe('ready');
+});
+
 it('leaves a service there is none of alone until the UI is shown again, so one started later appears', async () => {
   vi.useFakeTimers();
   const open = vi.fn<() => Promise<object | null>>().mockResolvedValue(null);

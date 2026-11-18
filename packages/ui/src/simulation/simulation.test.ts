@@ -44,7 +44,7 @@ it('reports compilation failure while GPU initialization is still pending', asyn
   vi.mocked(latkit).mockImplementationOnce(() => new Promise(() => {}));
   vi.spyOn(gridkit, 'compile').mockImplementationOnce(() => { throw new Error('Case cannot be compiled'); });
   const start = vi.fn(() => { throw new Error('Unexpected solver start'); });
-  const run = new RunSession({ start, close() {} }, new CaseDocument(parseCase(JSON.stringify(ieee39))),
+  const run = new RunSession({ engine: {}, start, close() {} }, new CaseDocument(parseCase(JSON.stringify(ieee39))),
     0, defaultStudy(), { basis: 'value', band: null, speed: 1 });
   try {
     await vi.waitFor(() => expect(run.error).toBe('Case cannot be compiled'));
@@ -58,7 +58,7 @@ it('ignores a late GPU initialization failure after the run is closed', async ()
   let reject!: (error: Error) => void;
   vi.mocked(latkit).mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; }));
   const start = vi.fn(() => { throw new Error('Unexpected solver start'); });
-  const run = new RunSession({ start, close() {} }, new CaseDocument(parseCase(JSON.stringify(ieee39))),
+  const run = new RunSession({ engine: {}, start, close() {} }, new CaseDocument(parseCase(JSON.stringify(ieee39))),
     0, defaultStudy(), { basis: 'value', band: null, speed: 1 });
   run.close();
   reject(new Error('GPU initialization failed'));
@@ -66,6 +66,20 @@ it('ignores a late GPU initialization failure after the run is closed', async ()
   expect(run.error).toBe('');
   expect(run.busy).toBe(false);
   expect(start).not.toHaveBeenCalled();
+});
+
+it('asks a run it can no longer hear to stop, so it does not hold the solver', async () => {
+  vi.stubGlobal('Worker', WorkerStub);
+  const cancel = vi.fn(async () => {});
+  const client: Solver = { engine: {}, close() {}, start: () => ({ cancel, results: async () => new MessageChannel().port1, artifacts: Promise.resolve([]),
+    async *updates() { yield { state: 'running', progress: null }; throw new Error('Failed to fetch'); } }) };
+  const run = new RunSession(client, new CaseDocument(parseCase(JSON.stringify(ieee39))), 0, defaultStudy(), { basis: 'value', band: null, speed: 1 });
+  try {
+    await vi.waitFor(() => expect(run.failed).toBe(true));
+    expect(run.error).toBe('Failed to fetch');
+    expect(run.busy).toBe(false);
+    expect(cancel).toHaveBeenCalledOnce();
+  } finally { run.close(); }
 });
 
 function inbox<T>(signal: AbortSignal) {
@@ -131,6 +145,7 @@ async function setup(fixture: unknown) {
   let progress: Progress = { rows: times.length, range: [0, 1] };
   let watch: ReturnType<typeof inbox<RunUpdate>>;
   const client: Solver = {
+    engine: {},
     start: () => ({ cancel: async () => {},
       results: async () => new MessageChannel().port1, artifacts: Promise.resolve([]),
       async *updates(signal) { watch = inbox(signal!); yield { state: 'running', progress }; yield* watch; },
@@ -284,6 +299,14 @@ for (const fixture of [ieee39, wecc240]) {
     expect(run.timeline).toEqual([0, 20]);
   });
 }
+
+it('runs a study where the browser has no device to draw with: its data loads before a device is asked for', async () => {
+  vi.mocked(latkit).mockImplementationOnce(async () => { throw Object.assign(new Error('This browser has no WebGL2.'), { code: 'unsupported' }); });
+  const { simulation } = await setup(ieee39), run = simulation.run!;
+  expect(run.error).toBe('');
+  expect(run.failed).toBe(false);
+  await vi.waitFor(() => expect(run.data!.get('Bus', simulationRow(run), 'Vm', { at: 1 })).toBe(1));
+});
 
 it('plots every series of a large quantity, narrows to selected and pinned elements when asked, and keeps network playback independent', async () => {
   const value = { ...ieee39, buses: [...ieee39.buses, ...Array.from({ length: 513 - ieee39.buses.length }, (_, i) => ({ ...ieee39.buses[0]!, number: 10_000 + i }))] };

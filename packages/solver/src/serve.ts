@@ -1,9 +1,10 @@
-import { SolverError, type ArtifactName, type RowsQuery, type RunId, type RunRequest, type SummaryQuery } from './index.js';
+import { SolverError, type ArtifactName, type Engine, type RowsQuery, type RunId, type RunRequest, type SummaryQuery } from './index.js';
 import type { ArtifactHeader, Command, Event, Reply, RowsHeader, RunStatus, SummaryHeader } from './protocol.js';
 import { answer } from './reply.js';
 
 /** What an implementation does in its worker. serve() does the rest: the page, each reader, aborts, and moving every part. */
 export interface Backend {
+  readonly engine: Engine;
   /** Resolves once `run` is accepted, or rejects it (busy, invalid); its statuses follow through the report. */
   start(run: RunId, request: RunRequest): Promise<void>;
   cancel(run: RunId): Promise<void>;
@@ -39,7 +40,7 @@ export function serve<Options>(open: Open<Options>, scope = self as unknown as E
       if (data.op === 'open') {
         backend?.close();
         backend = await open(data.options as Options, report);
-        send({ kind: 'answer', id: data.id, ...!backend && { absent: true as const } });
+        send({ kind: 'answer', id: data.id, ...backend && { engine: backend.engine } });
         return;
       }
       const opened = backend;

@@ -1,6 +1,6 @@
 import { isTerminal, type Artifact, type Run, type Solver, type TimeRange } from '@gridkit/solver';
 import type { CaseDocument, ElementRef } from '@gridkit/library';
-import { Data, type Source } from 'latkit';
+import { Data, type LatkitError, type Source } from 'latkit';
 import { percentable, type Basis, type Measure } from '../domain/measure.js';
 import { errorMessage } from '../ui/errors.js';
 import { latkit } from '../ui/latkit.js';
@@ -91,8 +91,9 @@ export class RunSession {
     this.playhead = new Playhead({ moved: time => this.#branches?.seek(time), end: () => this.range[1], running: () => this.busy });
     this.playhead.speed = carried.speed;
     this.#observer.start(async signal => {
-      // Observe both failures immediately while compilation and GPU setup proceed together.
-      const [{ channels, ...request }] = await Promise.all([compiled, latkit()]);
+      // Compile and set up the GPU together. Without WebGL2 the study still runs; only its views fail.
+      const [{ channels, ...request }] = await Promise.all([compiled,
+        latkit().catch((cause: LatkitError) => { if (cause?.code !== 'unsupported') throw cause; })]);
       signal.throwIfAborted();
       const run = this.#execution = client.start(request), results = this.#results = new RunResults(run.results());
       const parts = { results, extend: (range: TimeRange) => this.#extend(range), failed: (cause: unknown) => { this.error = errorMessage(cause); } };
@@ -117,7 +118,11 @@ export class RunSession {
         recording.start(this.channels, this.reference);
         this.#showPlot();
       }
-    }, cause => { this.error = errorMessage(cause); this.failed = true; this.busy = false; this.playhead.pause(); });
+    }, cause => {
+      this.error = errorMessage(cause); this.failed = true; this.busy = false; this.playhead.pause();
+      // Stop a run this page lost, so it does not hold the solver.
+      void this.#execution?.cancel().catch(() => {});
+    });
   }
 
   #extend(range: TimeRange) {

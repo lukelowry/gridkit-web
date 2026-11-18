@@ -23,7 +23,7 @@ export async function completedRun(page: Page) {
       }
       return route.fulfill({ contentType: 'application/octet-stream', body: Buffer.concat([size, header, data]) });
     }
-    return route.fulfill({ status: 204 });
+    return route.fulfill({ json: {} });
   });
   return () => submitted;
 }

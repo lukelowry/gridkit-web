@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"net/http"
-	"time"
 )
 
 // A reply is one transaction: a length-prefixed JSON header, then the FP64 planes it describes.
@@ -18,11 +17,6 @@ func writeHeader(w http.ResponseWriter, header any) error {
 	w.Header().Set("Content-Type", "application/octet-stream")
 	_, err = w.Write(append(binary.LittleEndian.AppendUint32(make([]byte, 0, 4+len(meta)), uint32(len(meta))), meta...))
 	return err
-}
-
-// held bounds a read that waits for new rows: the client asks again if nothing came.
-func held(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(ctx, 20*time.Second)
 }
 
 // RowsQuery asks for exact rows of some columns: from a row, or the last at or before a time.
@@ -74,7 +68,7 @@ func (s *Service) rows(w http.ResponseWriter, r *http.Request) error {
 		return invalid("The budget cannot fit a complete row.")
 	}
 	if query.Wait {
-		ctx, cancel := held(r.Context())
+		ctx, cancel := context.WithTimeout(r.Context(), hold)
 		defer cancel()
 		run.waitForRows(ctx, query.From)
 	}
@@ -227,7 +221,7 @@ func (s *Service) summary(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if query.After != nil {
-		ctx, cancel := held(r.Context())
+		ctx, cancel := context.WithTimeout(r.Context(), hold)
 		defer cancel()
 		run.waitForRows(ctx, *query.After)
 	}

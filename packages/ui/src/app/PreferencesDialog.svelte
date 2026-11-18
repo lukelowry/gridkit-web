@@ -3,6 +3,7 @@
   import { applies, categories, preferenceFields, preferenceKeys } from '../preferences/definitions.js';
   import { createPreferences, type PreferencesState } from '../preferences/state.svelte.js';
   import { equal, type CaseDocument, type SavedViews } from '@gridkit/library';
+  import type { Engine } from '@gridkit/solver';
   import { watchNotice } from '../ui/toasts.svelte.js';
   import { errorMessage } from '../ui/errors.js';
   import Dialog from '../ui/Dialog.svelte';
@@ -14,8 +15,9 @@
   import MappingSettings from '../mappings/MappingSettings.svelte';
   import AboutPanel from './AboutPanel.svelte';
 
-  let { preferences, document, mappings, onmappings, geographic, caseOpen, simulation = false, measure, band, initialPage = 'appearance', onpending, onclose }: {
+  let { preferences, document, mappings, onmappings, geographic, caseOpen, simulation = false, measure, band, engine, initialPage = 'appearance', onpending, onclose }: {
     preferences: PreferencesState; document: CaseDocument; mappings: SavedViews; onmappings: (value: SavedViews) => void; geographic: boolean; caseOpen: boolean; simulation?: boolean; measure?: Measure | undefined; band?: number | null | undefined;
+    engine: Engine;
     initialPage?: string;
     onpending: (pending: boolean) => void; onclose: () => void;
   } = $props();
@@ -60,7 +62,7 @@
   const showingMappings = $derived(mappingPages.some(page => page.id === active) && !words.length);
   const showingAbout = $derived(active === 'about' && !words.length);
   const matchingAbout = $derived(words.length > 0 && words.every(word =>
-    'about software specifications version versions build gridkit web latkit svelte simulation engine sundials klu suitesparse'.includes(word)));
+    'about software specifications version versions build gridkit web latkit svelte simulation engine sundials suitesparse'.includes(word)));
   // Dependent controls keep their place; availability follows the current settings.
   const shown = $derived(categories.map(category => ({
     ...category, keys: preferenceKeys.filter(key => {
@@ -120,7 +122,7 @@
     </nav>
     {#if showingAbout}
       <!-- svelte-ignore a11y_no_noninteractive_tabindex (This read-only region needs focus for keyboard scrolling.) -->
-      <div class="property-list c-scroll-region" role="region" aria-label="Software specifications" tabindex="0"><AboutPanel /></div>
+      <div class="property-list c-scroll-region" role="region" aria-label="Software specifications" tabindex="0"><AboutPanel {engine} /></div>
     {/if}
     <div class="property-list c-scroll-region" hidden={!showingMappings}>
       <section aria-label="Network mappings">

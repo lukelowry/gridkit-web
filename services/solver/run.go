@@ -7,9 +7,16 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
+
+// hold is the longest a request waits for news before answering; the page then asks again.
+const hold = 20 * time.Second
+
+// unwatched is how long a run may go unpolled before the next study replaces it: a hold plus the page's 30 s of retries.
+var unwatched = 3 * hold
 
 // Status is what a run's address answers.
 type Status struct {
@@ -25,6 +32,8 @@ type Run struct {
 	id, dir string
 	cancel  context.CancelFunc
 	done    chan struct{}
+	// Last request for this run, Unix nanoseconds.
+	heard atomic.Int64
 
 	mu       sync.Mutex
 	state    string
@@ -37,8 +46,16 @@ type Run struct {
 }
 
 func newRun(dir string) *Run {
-	return &Run{id: filepath.Base(dir), dir: dir, state: "running", sequence: 1, changed: make(chan struct{}), done: make(chan struct{})}
+	run := &Run{id: filepath.Base(dir), dir: dir, state: "running", sequence: 1, changed: make(chan struct{}), done: make(chan struct{})}
+	run.hear()
+	return run
 }
+
+// hear notes that a request named this run.
+func (r *Run) hear() { r.heard.Store(time.Now().UnixNano()) }
+
+// watched reports whether its page still polls it.
+func (r *Run) watched() bool { return time.Since(time.Unix(0, r.heard.Load())) < unwatched }
 
 func terminal(state string) bool {
 	return state == "completed" || state == "failed" || state == "cancelled"

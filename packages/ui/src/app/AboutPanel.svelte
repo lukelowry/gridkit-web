@@ -1,9 +1,14 @@
 <script lang="ts">
-  let { versions = {} }: { versions?: Readonly<Record<string, string | undefined>> } = $props();
-  const sections = [
-    { label: 'Application', components: ['GridKit Web', 'Latkit', 'Svelte'] },
-    { label: 'Simulation engine', components: ['GridKit', 'SUNDIALS', 'KLU', 'SuiteSparse'] },
-  ];
+  import type { Engine } from '@gridkit/solver';
+  import { version as svelte } from 'svelte/package.json';
+  import { dependencies, version } from '../../package.json';
+
+  /** The connected solver's versions; empty without one. */
+  let { engine }: { engine: Engine } = $props();
+  const sections = $derived([
+    { label: 'Application', versions: { 'GridKit Web': version, Latkit: dependencies.latkit, Svelte: svelte } },
+    { label: 'Simulation engine', versions: engine },
+  ]);
 </script>
 
 <section aria-label="About">
@@ -14,9 +19,10 @@
       <caption>{section.label}</caption>
       <thead><tr><th scope="col">Component</th><th scope="col">Version</th></tr></thead>
       <tbody>
-        {#each section.components as name (name)}
-          {@const version = versions[name]?.trim()}
-          <tr><th scope="row">{name}</th><td class={{ untracked: !version }}>{version || 'Untracked'}</td></tr>
+        {#each Object.entries(section.versions) as [name, version] (name)}
+          <tr><th scope="row">{name}</th><td>{version}</td></tr>
+        {:else}
+          <tr><td class="untracked" colspan="2">Untracked</td></tr>
         {/each}
       </tbody>
     </table>
@@ -33,6 +39,6 @@
   th:first-child { width: 55%; padding-right: 16px; }
   tbody th { font-weight: 400; }
   tbody tr + tr { border-top: 1px solid var(--color-divider); }
-  td, thead th:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+  td:not(.untracked), thead th:last-child { text-align: right; font-variant-numeric: tabular-nums; }
   .untracked { color: var(--color-text-3); }
 </style>

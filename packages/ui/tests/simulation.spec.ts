@@ -124,7 +124,7 @@ test('solver connection recovery uses shared notifications and keeps menu items 
   let offline = true;
   await page.route('**/api/solver/', route => offline
     ? route.fulfill({ status: 503, json: { code: 'unavailable', message: 'Solver offline.' } })
-    : route.fulfill({ status: 204 }));
+    : route.fulfill({ json: {} }));
   await openCase(page, small);
   await page.getByRole('button', { name: 'Solver', exact: true }).click();
   const notice = page.getByRole('region', { name: 'Notifications' });

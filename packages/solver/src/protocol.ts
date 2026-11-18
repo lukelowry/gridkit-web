@@ -1,4 +1,4 @@
-import type { ArtifactName, Cursor, Failure, Revision, RowsQuery, RunId, RunState, SummaryQuery, TileDescription, TimeRange } from './index.js';
+import type { ArtifactName, Cursor, Engine, Failure, Revision, RowsQuery, RunId, RunState, SummaryQuery, TileDescription, TimeRange } from './index.js';
 
 // The one protocol every implementation speaks: the page commands its solver's worker, which says what each run does; a reader
 // asks through a port of its own, and hears a header, then the numbers or bytes it asked for, moved rather than copied.
@@ -18,9 +18,12 @@ export type Command =
   | { readonly id: number; readonly op: 'start'; readonly run: RunId; readonly study: object; readonly model: Blob }
   | { readonly id: number; readonly op: 'cancel'; readonly run: RunId }
   | { readonly id: number; readonly op: 'results'; readonly run: RunId; readonly port: MessagePort };
-/** The worker to the page: each command's answer, and each run's statuses as they change, or why it can no longer say. */
+/**
+ * The worker to the page: each command's answer, and each run's statuses as they change, or why it can no longer say. `open`
+ * answers with the engine, or without one when there is no solver.
+ */
 export type Event =
-  | { readonly kind: 'answer'; readonly id: number; readonly error?: Failure; readonly absent?: true }
+  | { readonly kind: 'answer'; readonly id: number; readonly error?: Failure; readonly engine?: Engine }
   | { readonly kind: 'status'; readonly run: RunId; readonly status: RunStatus }
   | { readonly kind: 'lost'; readonly run: RunId; readonly error: Failure };
 

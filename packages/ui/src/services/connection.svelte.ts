@@ -9,7 +9,7 @@ export type ConnectionStatus = 'absent' | 'connecting' | 'ready' | 'unreachable'
 /**
  * A service the UI may find beside it, which `open` connects to, answering null where there is none. A
  * failure is tried again, waiting longer each time, since a service often starts after the UI; coming back to the
- * UI asks again whatever is not answering, so a service started later appears.
+ * UI asks again whatever is not answering, so a service started later appears. `unsupported` failures are not retried.
  */
 export class Connection<T> {
   value = $state.raw<T | null>(null);
@@ -17,6 +17,8 @@ export class Connection<T> {
   /** Whether it is being asked now. */
   pending = $state(false);
   #absent = $state(false);
+  /** Last failure was `unsupported`: retried only when the user asks. */
+  #unsupported = false;
   #retry: ReturnType<typeof setTimeout> | undefined;
   #wait = firstRetry;
   #disposed = false;
@@ -41,17 +43,19 @@ export class Connection<T> {
       const value = await this.#open(AbortSignal.any([abort.signal, AbortSignal.timeout(8_000)]));
       if (this.#disposed) { if (value !== null) this.#release?.(value); return; }
       this.value = value;
-      this.#absent = this.value === null; this.error = ''; this.#wait = firstRetry;
+      this.#absent = this.value === null; this.error = ''; this.#wait = firstRetry; this.#unsupported = false;
     } catch (cause) {
       if (this.#disposed) return;
       this.value = null; this.#absent = false; this.error = errorMessage(cause);
+      this.#unsupported = (cause as { code?: unknown } | null)?.code === 'unsupported';
+      if (this.#unsupported) return;
       this.#retry = setTimeout(() => void this.connect(), this.#wait);
       this.#wait = Math.min(this.#wait * 2, lastRetry);
     } finally { this.#abort = undefined; this.pending = false; }
   }
 
-  /** Asks again now whatever is not answering, as when the UI is shown again. */
-  recover() { if (this.status !== 'ready') void this.connect(); }
+  /** Retries now unless ready or unsupported, as when the UI is shown again. */
+  recover() { if (this.status !== 'ready' && !this.#unsupported) void this.connect(); }
 
   /** Ends retries and releases the service, including one that finishes connecting after removal. */
   dispose() {

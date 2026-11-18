@@ -387,7 +387,7 @@ const study = (tmax: number) => async () => ({ request: { study: { tmax }, model
 conformance('GridKit in the page', {
   async connect() {
     const { port1, port2 } = new MessageChannel();
-    serve(async (_options, report) => wasmBackend({ files: async () => ({ open: async () => memory(), remove: async () => {} }), gridkit: standIn }, report), port2);
+    serve(async (_options, report) => wasmBackend({ files: async () => ({ open: async () => memory(), remove: async () => {} }), gridkit: standIn, engine: {} }, report), port2);
     return (await client(port1, {}))!;
   },
   quick: study(1),

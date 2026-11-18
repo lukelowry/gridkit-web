@@ -186,7 +186,7 @@ func codeOf(t *testing.T, response *http.Response) string {
 func TestRoutesOwnTheirMethodsAndNothingElse(t *testing.T) {
 	server := testService(t)
 	for path, status := range map[string]int{
-		"/":                  http.StatusNoContent,
+		"/":                  http.StatusOK,
 		"/missing":           http.StatusNotFound,
 		"/api/runs":          http.StatusNotFound,
 		"/runs":              http.StatusMethodNotAllowed,
@@ -236,9 +236,9 @@ func TestTheGateGuardsTheAPIButNotHealth(t *testing.T) {
 	}{
 		{"/health", nil, "anywhere.test", http.StatusNoContent},
 		{"/", map[string]string{"Authorization": "Bearer no"}, "localhost", http.StatusUnauthorized},
-		{"/", token, "localhost", http.StatusNoContent},
-		{"/", token, "[::1]:8080", http.StatusNoContent},
-		{"/", map[string]string{"Authorization": "Bearer secret", "Origin": "http://localhost:8080"}, "localhost:8080", http.StatusNoContent},
+		{"/", token, "localhost", http.StatusOK},
+		{"/", token, "[::1]:8080", http.StatusOK},
+		{"/", map[string]string{"Authorization": "Bearer secret", "Origin": "http://localhost:8080"}, "localhost:8080", http.StatusOK},
 		{"/", map[string]string{"Authorization": "Bearer secret", "Origin": "https://evil.test"}, "localhost:8080", http.StatusForbidden},
 		{"/runs/none", map[string]string{"Authorization": "Bearer secret", "Origin": "http://localhost:9"}, "localhost:8080", http.StatusForbidden},
 	} {
@@ -392,6 +392,41 @@ func TestAnAbandonedUploadStartsNothingAndHoldsNothing(t *testing.T) {
 			t.Fatalf("still refused: %d", response.StatusCode)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestTheRootSaysWhatEngineRuns(t *testing.T) {
+	var engine map[string]string
+	getJSON(t, testService(t).URL+"/", http.StatusOK, &engine)
+	// Outside the image there is no versions.json.
+	if engine == nil || len(engine) != 0 {
+		t.Errorf("%+v", engine)
+	}
+}
+
+func TestARunNobodyFollowsGivesWayToTheNext(t *testing.T) {
+	fakeSolver(t, printed(recordingOf("t,a", 0, 1))+`; while [ ! -e "$PWD/done" ]; do sleep 0.01; done`)
+	// Set before the service starts; restored after it stops.
+	previous := unwatched
+	t.Cleanup(func() { unwatched = previous })
+	unwatched = 500 * time.Millisecond
+	server := testService(t)
+	first := started(t, server)
+	// A polled run refuses another.
+	statusOf(t, first)
+	if response := begin(t, server, `{}`, aModel); response.StatusCode != http.StatusConflict || codeOf(t, response) != "busy" {
+		t.Errorf("%d", response.StatusCode)
+	}
+	// Unpolled past unwatched, it is stopped and replaced.
+	time.Sleep(2 * unwatched)
+	second := started(t, server)
+	var failure Failure
+	getJSON(t, first, http.StatusGone, &failure)
+	if failure.Code != "expired" {
+		t.Errorf("%+v", failure)
+	}
+	if response := postJSON(t, second+"/cancel", nil); response.StatusCode != http.StatusNoContent {
+		t.Errorf("%d", response.StatusCode)
 	}
 }
 

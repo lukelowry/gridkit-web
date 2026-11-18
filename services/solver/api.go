@@ -63,6 +63,8 @@ func fail(w http.ResponseWriter, err error) {
 // Service owns the one run it retains. It reads neither models nor settings: GridKit judges those.
 type Service struct {
 	data, token string
+	// GridKit's versions.json, or {} outside its image.
+	engine json.RawMessage
 
 	mu        sync.Mutex
 	current   *Run
@@ -84,7 +86,11 @@ func newService(data, token string) (*Service, error) {
 			os.RemoveAll(filepath.Join(data, entry.Name()))
 		}
 	}
-	return &Service{data: data, token: token}, nil
+	engine, err := os.ReadFile(enginePath)
+	if err != nil || !json.Valid(engine) {
+		engine = []byte("{}")
+	}
+	return &Service{data: data, token: token, engine: engine}, nil
 }
 
 // stop ends a run still going, as the service shuts down.
@@ -107,9 +113,8 @@ func (s *Service) routes() http.Handler {
 			}
 		})
 	}
-	present := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }
-	// A UI host finds its solver by this answer at the root.
-	api.HandleFunc("GET /{$}", present)
+	// The root answers GridKit's versions; a UI host finds its solver here.
+	api.HandleFunc("GET /{$}", func(w http.ResponseWriter, _ *http.Request) { reply(w, http.StatusOK, s.engine) })
 	route("POST /runs", s.begin)
 	route("GET /runs/{id}", s.status)
 	route("POST /runs/{id}/rows", s.rows)
@@ -119,7 +124,7 @@ func (s *Service) routes() http.Handler {
 	route("GET /runs/{id}/log", s.file("run.log", "text/plain"))
 	route("GET /runs/{id}/solver", s.file("solver.json", "application/json"))
 	root := http.NewServeMux()
-	root.HandleFunc("GET /health", present)
+	root.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	root.Handle("/", s.gate(api))
 	return root
 }
@@ -148,6 +153,7 @@ func (s *Service) run(r *http.Request) (*Run, error) {
 	if s.current == nil || s.current.id != r.PathValue("id") {
 		return nil, errExpired
 	}
+	s.current.hear()
 	return s.current, nil
 }
 
@@ -165,10 +171,12 @@ func (s *Service) recording(r *http.Request) (*Run, *Store, error) {
 	return run, run.store, nil
 }
 
-// begin takes a whole request in one body, multipart `solver` and `model`, streamed to disk as it arrives.
+// begin takes a whole request in one body, multipart `solver` and `model`, streamed to disk as it arrives. An unfinished run
+// refuses it only while its page still polls.
 func (s *Service) begin(w http.ResponseWriter, r *http.Request) error {
 	s.mu.Lock()
-	if s.uploading || (s.current != nil && !s.current.ended()) {
+	previous := s.current
+	if s.uploading || (previous != nil && !previous.ended() && previous.watched()) {
 		s.mu.Unlock()
 		return &Failure{"busy", "A simulation is already active.", http.StatusConflict}
 	}
@@ -195,10 +203,15 @@ func (s *Service) begin(w http.ResponseWriter, r *http.Request) error {
 		os.RemoveAll(dir)
 		return err
 	}
-	// Only a good request retires the result before it.
+	// Only a valid request replaces the previous run, stopping it if still going.
+	if previous != nil {
+		if err := previous.stop(); err != nil {
+			os.RemoveAll(dir)
+			return err
+		}
+	}
 	run := newRun(dir)
 	s.mu.Lock()
-	previous := s.current
 	s.current = run
 	s.mu.Unlock()
 	if previous != nil {
@@ -259,7 +272,7 @@ func (s *Service) receive(r *http.Request, dir string) (string, error) {
 	return solver, os.WriteFile(solver, text, 0o600)
 }
 
-// status holds until the run moves past `after`, for at most 20 s.
+// status holds until the run moves past `after`, for at most a hold.
 func (s *Service) status(w http.ResponseWriter, r *http.Request) error {
 	run, err := s.run(r)
 	if err != nil {
@@ -271,7 +284,7 @@ func (s *Service) status(w http.ResponseWriter, r *http.Request) error {
 			return invalid("Expected an integer after.")
 		}
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), hold)
 	defer cancel()
 	run.wait(ctx, after)
 	status, err := run.status()
