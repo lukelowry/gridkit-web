@@ -263,10 +263,10 @@ func TestARunRecordsAndServesWhatGridKitWrites(t *testing.T) {
 		t.Fatalf("%+v %v", rows, values)
 	}
 
-	var summary SummaryHeader
-	answer(t, postJSON(t, address+"/summary", SummaryQuery{Columns: []string{"Bus_1_Vm"}, Resolution: 100, MaxBytes: 4096}), &summary)
-	if summary.State != "completed" || summary.Rows != 2 || !summary.Reset {
-		t.Errorf("%+v", summary)
+	var entries RowsHeader
+	values = answer(t, postJSON(t, address+"/entries", EntriesQuery{Columns: []string{"Bus_1_Vm"}, Count: 8, MaxBytes: 4096}), &entries)
+	if entries.State != "completed" || entries.Count != 2 || len(values) != 4 || values[3] != 3 {
+		t.Errorf("%+v %v", entries, values)
 	}
 
 	download := func(name string) string {
@@ -458,8 +458,8 @@ func TestCancellingKeepsAReadablePartialResult(t *testing.T) {
 	if status.State != "cancelled" || status.Rows != 2 {
 		t.Errorf("%+v", status)
 	}
-	var header SummaryHeader
-	answer(t, postJSON(t, address+"/summary", SummaryQuery{Columns: []string{"a"}, Resolution: 100, MaxBytes: 4096}), &header)
+	var header RowsHeader
+	answer(t, postJSON(t, address+"/entries", EntriesQuery{Columns: []string{"a"}, Count: 2, MaxBytes: 4096}), &header)
 	if header.State != "cancelled" {
 		t.Errorf("%+v", header)
 	}
@@ -472,7 +472,7 @@ func TestMalformedQueriesAreTheClientsMistake(t *testing.T) {
 	finished(t, address)
 	for path, query := range map[string]any{
 		"/rows":    map[string]any{"columns": []string{"missing"}, "maxBytes": 64},
-		"/summary": map[string]any{"columns": [][]string{{"a"}}, "resolution": 1, "maxBytes": 4096},
+		"/entries": map[string]any{"columns": [][]string{{"a"}}, "count": 1, "maxBytes": 4096},
 	} {
 		if response := postJSON(t, address+path, query); response.StatusCode != http.StatusBadRequest || codeOf(t, response) != "invalid" {
 			t.Errorf("%s: %d", path, response.StatusCode)

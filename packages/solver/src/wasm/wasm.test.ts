@@ -2,14 +2,14 @@ import { expect, it, vi } from 'vitest';
 import fixture from '../../test/stream.json';
 import { conformance } from '../../test/conformance.js';
 import { client } from '../client.js';
-import { openReader, type SummaryQuery, type TileDescription, type TimeRange } from '../index.js';
+import { openReader, type EntriesQuery } from '../index.js';
 import type { RunStatus } from '../protocol.js';
 import { answer } from '../reply.js';
 import { serve } from '../serve.js';
 import { wasmBackend } from './backend.js';
 import { gridkit, type GridKitCommand, type GridKitEvent, type GridKitStudy, type GridKitWorker } from './gridkit.js';
 import { Host, type RunFiles } from './host.js';
-import { checkRows, checkSummary, readRows, summarize, tiles } from './reads.js';
+import { checkEntries, checkRows, readEntries, readRows } from './reads.js';
 import { Store, type Blocks } from './store.js';
 
 /** Files held in memory, read and written by position as OPFS's sync access handles are. */
@@ -33,23 +33,29 @@ const rowsOf = (first: number, last: number, columns: number, rate: number, valu
     const i = first + Math.floor(k / (columns + 1)), c = k % (columns + 1);
     return c ? value(i, c - 1) : i / rate;
   });
-/** A summary planned and its tiles read, as a reader receives them. */
-function read(store: Store, query: SummaryQuery) {
-  const columns = checkSummary(store, query), plan = summarize(store, store.extent, query, columns.length);
-  return { ...plan, pages: plan.tiles.map(tile => ({ tile, values: store.planes(tile.level, tile.first, tile.rows, columns) })) };
-}
 
 // The store, as the solver service's store_test.go checks it.
 
-it('keeps extremes at every level', async () => {
-  const store = storeOf(names(4)), count = 20000;
-  for (let first = 0; first < count; first += 127) {
-    await store.append(rowsOf(first, Math.min(first + 127, count), 4, 1000, (i, c) => c !== 1 ? 0 : i === 4031 ? 900 : i === 8173 ? -700 : Math.sin(i / 1000)));
-  }
-  expect(store.extent).toMatchObject({ rows: count, start: 0, end: 19.999 });
-  for (let level = 1, span = 8; span <= count; level++, span *= 8) {
-    const rows = Math.floor(count / span), values = store.planes(level, 0, rows, [1]);
-    expect([Math.min(...values.subarray(2 * rows, 3 * rows)), Math.max(...values.subarray(3 * rows, 4 * rows))], `level ${level}`).toEqual([-700, 900]);
+it('folds every level\'s entries from their rows, the last while it fills, however the rows arrive; a gap stays a gap', async () => {
+  const width = 200, store = storeOf(names(width)), columns = [width - 1, 3, 0];
+  const value = (i: number, column: number) => i === 77 && column === 3 ? NaN : Math.sin(i * (column + 1) / 50);
+  /** The least and greatest of rows `first` to `last` of `column`, or NaN where one has a gap. */
+  const fold = (first: number, last: number, column: number) => {
+    const values = Array.from({ length: last - first + 1 }, (_, k) => value(first + k, column));
+    return values.some(Number.isNaN) ? [NaN, NaN] : [Math.min(...values), Math.max(...values)];
+  };
+  let previous = 0;
+  for (const count of [1, 7, 8, 9, 63, 64, 65, 600, 1001]) {
+    await store.append(rowsOf(previous, count, width, 100, value));
+    previous = count;
+    for (let level = 0; level < store.levels; level++) {
+      const span = 8 ** level, n = Math.ceil(count / span);
+      const entries = Array.from({ length: n }, (_, index) => [index * span, Math.min((index + 1) * span, count) - 1] as const);
+      const starts = entries.map(([first]) => first / 100), ends = entries.map(([, last]) => last / 100);
+      const folded = entries.flatMap(([first, last]) => columns.map(column => fold(first, last, column)));
+      const lows = folded.map(([low]) => low), highs = folded.map(([, high]) => high);
+      expect([...store.planes(level, 0, n, columns)], `${count} rows, level ${level}`).toEqual(level ? [...starts, ...ends, ...lows, ...highs] : [...starts, ...lows]);
+    }
   }
 });
 
@@ -63,13 +69,6 @@ it('reads around a time, keeping equal times and gaps', async () => {
   expect(store.around(2, 30, 8)).toEqual([1, 1]);
   expect(store.around(0, 30, 8)).toEqual([0, 0]);
   expect(store.around(4, -5, 1)[0]).toBe(0);
-});
-
-it('keeps a gap a gap in coarse entries', async () => {
-  const store = storeOf(['a']);
-  await store.append(rowsOf(0, 64, 1, 1, i => i === 9 ? NaN : i));
-  // Starts, ends, minima, maxima of two buckets: the first whole, the second holding the gap.
-  expect([...store.planes(1, 0, 2, [0])]).toEqual([0, 8, 7, 15, 0, NaN, 7, NaN]);
 });
 
 it('refuses unordered or invalid times', async () => {
@@ -114,108 +113,29 @@ it('answers the shared wire fixture exactly as the solver service does', async (
   const revision = { rows: store.extent.rows, state: 'completed', range: [store.extent.start, store.extent.end] };
   const rows = readRows(store, store.extent, checkRows(store, { columns: fixture.columns, maxBytes: 4096 }));
   expect({ header: { ...revision, first: rows.first, count: rows.count }, values: [...rows.values] }).toEqual(decoded(fixture.replies.rows));
-  const summary = read(store, { columns: fixture.columns, range: null, resolution: 100, maxBytes: 4096 });
-  expect({ header: { ...revision, reset: summary.reset, cursor: summary.cursor, tiles: summary.tiles }, values: summary.pages.flatMap(page => [...page.values]) })
-    .toEqual(decoded(fixture.replies.summary));
+  // The coarse level's whole bucket, and the one still filling.
+  const query = { columns: fixture.columns, level: 1, first: 0, count: 2, maxBytes: 4096 };
+  const entries = readEntries(store, store.extent, checkEntries(store, query), query);
+  expect({ header: { ...revision, first: entries.first, count: entries.count }, values: [...entries.values] }).toEqual(decoded(fixture.replies.entries));
 });
 
-it('keeps exact times across ten thousand columns, whatever the packet size', async () => {
-  const columns = names(10000), store = storeOf(columns), value = (i: number, c: number) => i + c / 100000;
-  for (let first = 0; first < 1001; first += 26) await store.append(rowsOf(first, Math.min(first + 26, 1001), 10000, 100, value));
-  for (const budget of [512 * 1024, 2 * 1024 * 1024]) {
-    const { pages } = read(store, { columns, range: [0, 10], resolution: 1250, maxBytes: budget });
-    expect(pages.length).toBeGreaterThan(1);
-    let cursor = 0;
-    for (const { tile, values } of pages) {
-      expect(values.length * 8).toBeLessThanOrEqual(budget);
-      expect(tile).toMatchObject({ target: 'history', level: 0, first: cursor });
-      for (let row = 0; row < tile.rows; row++) {
-        expect(values[row]).toBe((cursor + row) / 100);
-        expect(values[tile.rows + row * 10000 + 9999]).toBe(value(cursor + row, 9999));
-      }
-      cursor += tile.rows;
-    }
-    expect(cursor).toBe(1001);
-  }
-});
-
-it('covers partial pyramid boundaries whole, and no bucket spans more than a pixel', async () => {
-  const store = storeOf(['c']), range: TimeRange = [.03, 10];
-  let query: SummaryQuery = { columns: ['c'], range, resolution: 12, maxBytes: 4096 }, previous = 0;
-  const sealed = new Set<number>();
-  for (const count of [63, 64, 65, 511, 512, 513, 959, 960, 961, 1001]) {
-    await store.append(rowsOf(previous, count, 1, 100, i => Math.sin(i / 100)));
-    const summary = read(store, query), edges = new Set<number>();
-    query = { ...query, cursor: summary.cursor };
-    if (summary.reset) sealed.clear();
-    for (const { tile, values } of summary.pages) {
-      const span = 8 ** tile.level;
-      for (let row = tile.first * span; row < (tile.first + tile.rows) * span; row++) {
-        expect(sealed.has(row), `row ${row} is sent twice`).toBe(false);
-        (tile.target === 'history' ? sealed : edges).add(row);
-      }
-      if (tile.level > 0) for (let i = 0; i < tile.rows; i++) expect(values[tile.rows + i]! - values[i]!).toBeLessThanOrEqual((10 - .03) / 12);
-    }
-    const [first, last] = store.interval(store.extent, range);
-    for (let row = first; row < last; row++) expect(sealed.has(row) || edges.has(row), `row ${row} of [${first}, ${last})`).toBe(true);
-    expect(sealed.size + edges.size).toBe(last - first);
-    previous = count;
-  }
-});
-
-it('never repeats history as a run grows', async () => {
-  const columns = names(243), store = storeOf(columns);
-  let query: SummaryQuery = { columns, range: null, resolution: 64, maxBytes: 4 * 1024 * 1024 }, previous = 0;
-  const entries = new Set<string>();
-  for (const count of [1, 40, 64, 65, 500, 1000, 1100, 1900, 20000]) {
-    await store.append(rowsOf(previous, count, 243, 1000, (i, c) => Math.sin(i / 1000) + c));
-    const summary = read(store, query);
-    query = { ...query, cursor: summary.cursor };
-    if (summary.reset) entries.clear();
-    for (const { tile } of summary.pages) {
-      expect((tile.first + tile.rows) * 8 ** tile.level).toBeLessThanOrEqual(count);
-      if (tile.target !== 'history') continue;
-      for (let index = tile.first; index < tile.first + tile.rows; index++) {
-        const key = `${tile.level}:${index}`;
-        expect(entries.has(key), `${key} is sent twice`).toBe(false);
-        entries.add(key);
-      }
-    }
-    previous = count;
-  }
-  const again = read(store, query);
-  expect(again.reset).toBe(false);
-  expect(again.tiles.every(tile => tile.target === 'edge')).toBe(true);
-});
-
-it('keeps actual levels at arbitrary viewport edges', async () => {
-  const store = storeOf(['c']);
-  await store.append(rowsOf(0, 10000, 1, 1, i => i));
-  let cursor = 3;
-  for (const tile of tiles('history', 3, 9997, 4, 1, 4096)) {
-    const span = 8 ** tile.level, values = store.planes(tile.level, tile.first, tile.rows, [0]);
-    expect(tile.first * span).toBe(cursor);
-    expect(values[0]).toBe(tile.first * span);
-    if (tile.kind === 'envelope') expect(values[tile.rows]! - values[0]!).toBe(span - 1);
-    cursor += tile.rows * span;
-  }
-  expect(cursor).toBe(9997);
+it('stops entries at what is recorded, and refuses a level it holds no whole entry of or a read past its budget', async () => {
+  const store = storeOf(['a']);
+  await store.append(rowsOf(0, 10, 1, 1, i => i));
+  const read = (asked: Partial<EntriesQuery>) => {
+    const query = { columns: ['a'], level: 0, first: 0, count: 8, maxBytes: 4096, ...asked };
+    return readEntries(store, store.extent, checkEntries(store, query), query).count;
+  };
+  expect([read({ first: 8 }), read({ first: 10 }), read({ level: 1 })]).toEqual([2, 0, 2]);
+  // Two coarse entries are 64 bytes: their starts, ends, minima and maxima.
+  for (const query of [{ columns: [] }, { level: -1 }, { level: 2 }, { first: -1 }, { count: 0 }, { level: 1, count: 2, maxBytes: 63 }, { maxBytes: (16 << 20) + 1 }])
+    expect(() => read(query), JSON.stringify(query)).toThrow('Invalid read.');
 });
 
 it('reads every Nth row as it says', async () => {
   const store = storeOf(names(3));
   await store.append(rowsOf(0, 100, 3, 1, (i, c) => i * 10 + c));
   expect([...store.sampled(5, 3, 10, [2, 0])]).toEqual([5, 15, 25, 52, 50, 152, 150, 252, 250]);
-});
-
-it('refuses a budget too small or a selection too wide', () => {
-  const store = storeOf(names(300)), one = ['c0'];
-  for (const query of [{ resolution: 0, maxBytes: 4096 }, { resolution: 65537, maxBytes: 4096 }, { resolution: 1, maxBytes: 4095 },
-    { resolution: 1, maxBytes: (64 << 20) + 1 }, { resolution: 1, maxBytes: 4096, range: [2, 1] as const }]) {
-    expect(() => checkSummary(store, { columns: one, range: null, ...query })).toThrow();
-  }
-  expect(() => checkSummary(store, { columns: names(300), range: null, resolution: 1, maxBytes: 4096 })).toThrow('too wide');
-  expect(() => checkSummary(store, { columns: [], range: null, resolution: 1, maxBytes: 4096 })).toThrow('Choose');
 });
 
 // The solver in the page: a run's life, read back through a reader's own port.
@@ -232,7 +152,7 @@ function host() {
   const reader = (run: string) => {
     const { port1, port2 } = new MessageChannel();
     answer(port1, async question => question.op === 'rows' ? local.rows(run, question.query)
-      : question.op === 'summary' ? local.summary(run, question.query) : { header: {}, parts: local.csv(run) });
+      : question.op === 'entries' ? local.entries(run, question.query) : { header: {}, parts: local.csv(run) });
     return openReader(port2);
   };
   const start: GridKitStudy = { settings: {}, model: new Blob() };
@@ -257,10 +177,8 @@ it('runs a study and reads it back through the page\'s reader as the solver serv
   expect([...rows.samples.values]).toEqual([1.1, 0.7]);
   await settle();
   expect(statuses.at(-1)).toMatchObject({ run: 'a', status: { state: 'completed', rows: 2, range: [0, 1] }, log: 'Hygov: effective Hdam raised\n' });
-  const summary = await results.summary({ columns: ['v'], range: null, resolution: 100, maxBytes: 4096 }, signal), pages = [];
-  for await (const page of summary.pages()) pages.push(page);
-  expect(summary).toMatchObject({ state: 'completed', reset: true, tiles: [{ target: 'history', kind: 'samples', level: 0, first: 0, rows: 2 } satisfies TileDescription] });
-  expect([...(pages[0]!.block as { values: Float64Array }).values]).toEqual([1.1, 0.7]);
+  const { state, block } = await results.entries({ columns: ['v'], level: 0, first: 0, count: 8, maxBytes: 4096 }, signal);
+  expect({ state, kind: block.kind, values: block.kind === 'samples' && [...block.values] }).toEqual({ state: 'completed', kind: 'samples', values: [1.1, 0.7] });
   await expect(results.rows({ columns: ['missing'], maxBytes: 4096 }, signal)).rejects.toMatchObject({ code: 'invalid' });
   results.close();
 

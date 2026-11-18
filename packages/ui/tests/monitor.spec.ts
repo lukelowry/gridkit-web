@@ -80,14 +80,13 @@ for (const edge of [false, true]) test('monitor and network mirror hover and cli
   await expect(network).not.toHaveAccessibleDescription(/Hovered:/);
 });
 
-test('the plot reads its samples at the width it draws, and playback speed opens once the run has ended', async ({ page }) => {
+test('the plot draws the run from its time tiles, and playback speed opens once the run has ended', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  const resolutions: number[] = [];
-  page.on('request', request => { if (request.url().endsWith('/summary')) resolutions.push(request.postDataJSON().resolution); });
-  const panel = await openResults(page), width = await panel.locator('canvas').evaluate((canvas: HTMLCanvasElement) => canvas.width);
-  // Its time axis spans most of its canvas: a width read before its first frame would ask for a fraction of this.
-  await expect.poll(() => resolutions.at(-1)).toBeGreaterThan(width / 2);
-  expect(resolutions.at(-1)).toBeLessThanOrEqual(width);
+  const spans: unknown[] = [];
+  page.on('request', request => { if (request.url().endsWith('/entries')) spans.push(request.postDataJSON()); });
+  const panel = await openResults(page);
+  // The run's two rows are the first span of its finest level.
+  expect(spans).toContainEqual(expect.objectContaining({ level: 0, first: 0 }));
   const speed = panel.getByRole('combobox', { name: 'Playback speed' });
   await expect(speed).toBeEnabled();
   await speed.selectOption({ label: '2×' });

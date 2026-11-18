@@ -27,7 +27,7 @@ await page.getByRole('button', { name: 'Network', exact: true }).click();
 await sleep(1500);
 
 let reads = 0;
-page.on('request', request => { if (/\/api\/runs\/[^/]+\/(rows|summary)$/.test(new URL(request.url()).pathname)) reads++; });
+page.on('request', request => { if (/\/api\/solver\/runs\/[^/]+\/(rows|entries)$/.test(new URL(request.url()).pathname)) reads++; });
 await page.evaluate(() => {
   const probe = window as unknown as Window & { seen: Seen; seenFrame: number };
   const clock = document.querySelector<HTMLInputElement>('input[aria-label="Simulation time"]')!;

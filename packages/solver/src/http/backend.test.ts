@@ -155,7 +155,7 @@ it('reads beneath the run\'s address what it was asked, and says what the servic
       asked = JSON.parse(init!.body as string);
       return new Response(frame({ rows: 7, state: 'completed', range: [0, 1], first: 5, count: 2 }, Float64Array.of(0, 1, 10, 11)));
     }
-    if (path === '/api/solver/runs/run/summary') return Response.json({ code: 'expired', message: 'This simulation has expired.' }, { status: 410 });
+    if (path === '/api/solver/runs/run/entries') return Response.json({ code: 'expired', message: 'This simulation has expired.' }, { status: 410 });
     return completed;
   });
   const run = (await connected())!.start(request);
@@ -164,6 +164,6 @@ it('reads beneath the run\'s address what it was asked, and says what the servic
   const { samples } = await reader.rows({ columns: ['v'], from: 5, every: 2, wait: true, maxBytes: 64 });
   expect(asked).toEqual({ columns: ['v'], from: 5, every: 2, wait: true, maxBytes: 64 });
   expect({ first: samples.first, times: [...samples.times], values: [...samples.values] }).toEqual({ first: 5, times: [0, 1], values: [10, 11] });
-  await expect(reader.summary({ columns: ['v'], range: null, resolution: 10, maxBytes: 4096 })).rejects.toMatchObject({ code: 'expired', message: 'This simulation has expired.' });
+  await expect(reader.entries({ columns: ['v'], level: 0, first: 0, count: 1, maxBytes: 4096 })).rejects.toMatchObject({ code: 'expired', message: 'This simulation has expired.' });
   reader.close();
 });

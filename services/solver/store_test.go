@@ -25,37 +25,57 @@ func newTestStore(t *testing.T, columns []string) *Store {
 	return store
 }
 
-func TestExtremesSurviveEveryLevel(t *testing.T) {
-	store := newTestStore(t, names(4))
-	const count = 20000
-	for first := 0; first < count; first += 127 {
-		rows := make([]float64, 0, 127*5)
-		for i := first; i < min(first+127, count); i++ {
-			value := math.Sin(float64(i) / 1000)
-			switch i {
-			case 4031:
-				value = 900
-			case 8173:
-				value = -700
+// Every level's entries are what folding their rows gives, the last one too while it fills, however the rows arrive. A gap stays a
+// gap at every level: a bucket holding one is NaN.
+func TestEveryLevelFoldsItsRowsTheLastWhileItFills(t *testing.T) {
+	const width = 200
+	store, columns, previous := newTestStore(t, names(width)), []int{width - 1, 3, 0}, 0
+	value := func(i, c int) float64 {
+		if i == 77 && c == 3 {
+			return math.NaN()
+		}
+		return math.Sin(float64(i*(c+1)) / 50)
+	}
+	// fold is the least and greatest of rows first..last of `column`, or NaN where one has a gap.
+	fold := func(first, last, column int) (float64, float64) {
+		low, high := math.Inf(1), math.Inf(-1)
+		for i := first; i <= last; i++ {
+			v := value(i, column)
+			if math.IsNaN(v) {
+				return v, v
 			}
-			rows = append(rows, float64(i)/1000, 0, value, 0, 0)
+			low, high = min(low, v), max(high, v)
 		}
-		if err := store.Append(rows); err != nil {
+		return low, high
+	}
+	for _, count := range []int{1, 7, 8, 9, 63, 64, 65, 600, 1001} {
+		if err := store.Append(rowsOf(previous, count, width, 100, value)); err != nil {
 			t.Fatal(err)
 		}
-	}
-	view := store.extent.Load()
-	if view.rows != count || view.start != 0 || view.end != 19.999 {
-		t.Fatalf("%+v", view)
-	}
-	for level, span := 1, 8; span <= count; level, span = level+1, span*8 {
-		rows := count / span
-		values, err := store.planes(view, level, 0, rows, []int{1})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if low, high := slices.Min(values[2*rows:3*rows]), slices.Max(values[3*rows:4*rows]); low != -700 || high != 900 {
-			t.Errorf("level %d: [%g, %g]", level, low, high)
+		previous = count
+		view := store.extent.Load()
+		for level := range len(view.files) {
+			span, n := 1<<(3*level), view.entries(level)
+			var starts, ends, lows, highs []float64
+			for index := range n {
+				first, last := index*span, min((index+1)*span, count)-1
+				starts, ends = append(starts, float64(first)/100), append(ends, float64(last)/100)
+				for _, column := range columns {
+					low, high := fold(first, last, column)
+					lows, highs = append(lows, low), append(highs, high)
+				}
+			}
+			want := slices.Concat(starts, lows)
+			if level > 0 {
+				want = slices.Concat(starts, ends, lows, highs)
+			}
+			got, err := store.planes(view, level, 0, n, columns)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.EqualFunc(got, want, func(a, b float64) bool { return a == b || math.IsNaN(a) && math.IsNaN(b) }) {
+				t.Fatalf("%d rows, level %d:\n%v\nwant %v", count, level, got, want)
+			}
 		}
 	}
 }
@@ -86,29 +106,6 @@ func TestReadsAroundATimeKeepEqualTimesAndGaps(t *testing.T) {
 	}
 	if first, _, _ := store.around(view, 4, -5, 1); first != 0 {
 		t.Errorf("%d", first)
-	}
-}
-
-func TestAGapStaysAGapInCoarseEntries(t *testing.T) {
-	store := newTestStore(t, []string{"a"})
-	rows := make([]float64, 0, 128)
-	for i := range 64 {
-		value := float64(i)
-		if i == 9 {
-			value = math.NaN()
-		}
-		rows = append(rows, float64(i), value)
-	}
-	if err := store.Append(rows); err != nil {
-		t.Fatal(err)
-	}
-	values, err := store.planes(store.extent.Load(), 1, 0, 2, []int{0})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Starts, ends, minima, maxima of two buckets: the first whole, the second holding the gap.
-	if values[0] != 0 || values[1] != 8 || values[2] != 7 || values[3] != 15 || values[4] != 0 || !math.IsNaN(values[5]) || values[6] != 7 || !math.IsNaN(values[7]) {
-		t.Fatalf("%v", values)
 	}
 }
 

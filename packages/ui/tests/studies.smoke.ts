@@ -46,16 +46,14 @@ describe('studies GridKit runs', { timeout: 300_000 }, () => {
     // Every column this UI compiled is one GridKit recorded.
     const everything = channels.map(channel => channel.column);
     await reader.rows({ columns: everything, at: 0, count: 1, maxBytes: 8*1024*1024 });
-    // Coarse tiles of the whole run keep the native recording's minimum exactly.
+    // The coarsest level the run holds keeps the native recording's minimum exactly, the run whole in a few entries.
+    let level = 0;
+    while (8 ** (level + 1) <= final.progress!.rows) level++;
+    expect(level, 'The run reaches a coarse level.').toBeGreaterThan(0);
+    const count = Math.ceil(final.progress!.rows / 8 ** level), { block } = await reader.entries({ columns: ids, level, first: 0, count, maxBytes: 16 * count * (1 + ids.length) });
+    if (block.kind !== 'envelope') throw new Error('A coarse level reads as an envelope.');
     const least = new Float64Array(ids.length).fill(Infinity);
-    let coarse = 0;
-    const summary = await reader.summary({ columns: ids, range: null, resolution: 64, maxBytes: 4*1024*1024 });
-    for await (const { level, block } of summary.pages()) {
-      if (level) coarse++;
-      const values = block.kind === 'samples' ? block.values : block.minimum;
-      for (const [index, value] of values.entries()) least[index % ids.length] = Math.min(least[index % ids.length]!, value);
-    }
-    expect(coarse, 'The whole run is drawn from the pyramid.').toBeGreaterThan(0);
+    for (const [index, value] of block.minimum.entries()) least[index % ids.length] = Math.min(least[index % ids.length]!, value);
     const { samples: initial } = await reader.rows({ columns: ids, at: 0, count: 1, maxBytes: 1024*1024 });
     const column = voltages.findIndex(channel => channel.label === String(faulted));
     expect(initial.values[column]! - least[column]!, 'The faulted bus shows a voltage drop.').toBeGreaterThan(0.05);

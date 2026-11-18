@@ -7,13 +7,10 @@ export async function completedRun(page: Page) {
     const path = new URL(route.request().url()).pathname;
     if (path.endsWith('/runs')) { submitted++; return route.fulfill({ json: { id: 'harden-test' } }); }
     if (path.endsWith('/runs/harden-test')) return route.fulfill({ json: { sequence: 1, state: 'completed', rows: 2, range: [0, 1] } });
-    if (path.endsWith('/rows') || path.endsWith('/summary')) {
-      const query = route.request().postDataJSON(), count = query.count === 1 ? 1 : 2;
-      const common = { rows: 2, state: 'completed', range: [0, 1] };
-      const header = Buffer.from(JSON.stringify(path.endsWith('/rows') ? { ...common, first: 0, count } : {
-        ...common, reset: true, cursor: { level: 0, first: 0, sealed: 2 },
-        tiles: [{ target: 'history', kind: 'samples', level: 0, first: 0, rows: 2 }],
-      }));
+    // Rows, or entries of level 0: two rows hold no coarser level.
+    if (path.endsWith('/rows') || path.endsWith('/entries')) {
+      const query = route.request().postDataJSON(), count = Math.min(query.count || 2, 2);
+      const header = Buffer.from(JSON.stringify({ rows: 2, state: 'completed', range: [0, 1], first: 0, count }));
       const size = Buffer.alloc(4); size.writeUInt32LE(header.length);
       const data = Buffer.alloc(8 * count * (1 + query.columns.length));
       for (let row = 0; row < count; row++) {
