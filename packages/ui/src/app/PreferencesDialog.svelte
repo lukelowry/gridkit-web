@@ -67,7 +67,7 @@
   const shown = $derived(categories.map(category => ({
     ...category, keys: preferenceKeys.filter(key => {
       const item = preferenceFields[key];
-      const text = `${category.label} ${item.group} ${item.label} ${key} ${item.kind === 'color' ? 'colour palette opacity' : ''} ${key === 'motion' ? 'animation accessibility' : ''} ${key === 'geography' ? 'borders map' : ''}`.toLowerCase();
+      const text = `${category.label} ${item.group} ${item.label} ${key} ${item.kind === 'color' ? 'colour palette opacity' : ''} ${key === 'motion' ? 'animation accessibility' : ''} ${key === 'geography' ? 'borders map' : ''} ${key.startsWith('parallel') ? 'circuits lines' : ''} ${key.startsWith('flow') ? 'animation power' : ''}`.toLowerCase();
       return item.category === category.id && words.every(word => text.includes(word));
     }),
   })).filter(category => category.keys.length));

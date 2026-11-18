@@ -3,7 +3,7 @@
   import type { ElementRef } from '@gridkit/library';
   import type { Preferences } from '../preferences/definitions.js';
   import type { PreferencesState } from '../preferences/state.svelte.js';
-  import type { PlotAxis } from './plot.js';
+  import type { PlotAxis, PlotData } from './plot.js';
   import type { ArtifactName, TimeRange } from '@gridkit/solver';
   import type { RunSession } from './run.svelte.js';
   import { save } from '../ui/files.js';
@@ -39,7 +39,12 @@
     bottom: { to: 'right', label: 'Dock results on the right', icon: 'dock-right' },
     right: { to: 'bottom', label: 'Dock results at the bottom', icon: 'dock-bottom' },
   } as const;
-  const plot = $derived(run.plot);
+  /** The plot last drawn here, whichever run it was of. */
+  let drawn = $state.raw<PlotData>();
+  $effect.pre(() => { if (run.plot) drawn = run.plot; });
+  // One plot for the dock, never one per run: while a new run prepares, the plot goes on drawing what the run before it drew, and
+  // the new run's results take over the same view as latkit can draw them, rather than starting the plot over.
+  const plot = $derived(run.plot ?? (run.busy && !run.channels.length ? drawn : undefined));
   const time = $derived(run.playhead.time);
   let detail = $state<{ label: string; value: string; at: string } | null>(null);
   let measured = $state.raw<PlotAxis | null>(null);

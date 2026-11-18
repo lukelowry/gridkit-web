@@ -44,7 +44,7 @@ it('reports compilation failure while GPU initialization is still pending', asyn
   vi.spyOn(gridkit, 'compile').mockImplementationOnce(() => { throw new Error('Case cannot be compiled'); });
   const start = vi.fn(() => { throw new Error('Unexpected solver start'); });
   const run = new RunSession({ engine: {}, start, close() {} }, new CaseDocument(parseCase(JSON.stringify(ieee39))),
-    0, defaultStudy(), { basis: 'value', band: null, speed: 1 });
+    0, defaultStudy(), [], { basis: 'value', band: null, speed: 1 });
   try {
     await vi.waitFor(() => expect(run.error).toBe('Case cannot be compiled'));
     expect(run.failed).toBe(true);
@@ -58,7 +58,7 @@ it('ignores a late GPU initialization failure after the run is closed', async ()
   vi.mocked(latkit).mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; }));
   const start = vi.fn(() => { throw new Error('Unexpected solver start'); });
   const run = new RunSession({ engine: {}, start, close() {} }, new CaseDocument(parseCase(JSON.stringify(ieee39))),
-    0, defaultStudy(), { basis: 'value', band: null, speed: 1 });
+    0, defaultStudy(), [], { basis: 'value', band: null, speed: 1 });
   run.close();
   reject(new Error('GPU initialization failed'));
   await new Promise(resolve => setTimeout(resolve, 0));
@@ -72,7 +72,7 @@ it('asks a run it can no longer hear to stop, so it does not hold the solver', a
   const cancel = vi.fn(async () => {});
   const client: Solver = { engine: {}, close() {}, start: () => ({ cancel, results: async () => new MessageChannel().port1, artifacts: Promise.resolve([]),
     async *updates() { yield { state: 'running', progress: null }; throw new Error('Failed to fetch'); } }) };
-  const run = new RunSession(client, new CaseDocument(parseCase(JSON.stringify(ieee39))), 0, defaultStudy(), { basis: 'value', band: null, speed: 1 });
+  const run = new RunSession(client, new CaseDocument(parseCase(JSON.stringify(ieee39))), 0, defaultStudy(), [], { basis: 'value', band: null, speed: 1 });
   try {
     await vi.waitFor(() => expect(run.failed).toBe(true));
     expect(run.error).toBe('Failed to fetch');
@@ -145,7 +145,7 @@ async function setup(fixture: unknown) {
   await solver.connect();
   const simulation = new Simulation(solver);
   const study = { ...defaultStudy(), tmax: 20 };
-  const runs = [simulation.start(document, 0, study)];
+  const runs = [simulation.start(document, 0, study, [])];
   cleanup = async () => { simulation.close(); await Promise.all(runs); };
   await vi.waitFor(() => expect(simulation.run!.plot).toBeDefined());
   return {
@@ -157,7 +157,7 @@ async function setup(fixture: unknown) {
       watch.send(nextState === 'failed' ? { state: nextState, progress, error: { code: 'test', message: 'Stopped' } } : { state: nextState, progress } as RunUpdate);
       for (const wake of [...waiting]) wake();
     },
-    restart() { simulation.close(); study.tmax = 5; runs.push(simulation.start(document, 1, study)); },
+    restart() { simulation.close(); study.tmax = 5; runs.push(simulation.start(document, 1, study, [])); },
   };
 }
 

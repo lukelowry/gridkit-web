@@ -55,6 +55,21 @@ it('draws mappings over the catalog structure, with preferences as theme, contro
 
 });
 
+it('runs parallel circuits side by side and draws comets as the preferences set them, in high contrast too', () => {
+  const document = new CaseDocument(fixture());
+  const theme = (stored: object = {}) => scene(document, createPreferences(JSON.stringify(stored))).scene.theme;
+  expect(theme()).toMatchObject({ edge: { parallel: { converge: 'fan', gap: 2 } }, flow: { spacing: 64, length: 24, width: 4 } });
+  // Comets take the ground's color unless chosen, which every stroke is fitted to read on, a custom ground too.
+  expect(JSON.stringify(theme())).toContain('"flow":{"color":"var(--color-bg)"');
+  expect(theme({ networkBackground: '#102030' })).toMatchObject({ background: '#102030', flow: { color: '#102030' } });
+  const viewGround = documentWith({ theme: { background: '#203040' } });
+  expect(scene(viewGround).scene.theme).toMatchObject({ background: '#203040', flow: { color: '#203040' } });
+  expect(theme({ parallelBranches: 'straight', parallelGap: 1.5, flowColor: '#ff0000', flowSpacing: 40 }))
+    .toMatchObject({ edge: { parallel: { converge: 'straight', gap: 1.5 } }, flow: { color: '#ff0000', spacing: 40 } });
+  expect(theme({ parallelBranches: 'overlap' })).toMatchObject({ edge: { parallel: null } });
+  expect(theme({ contrast: 'high' })).toMatchObject({ edge: { width: 2.5, parallel: { converge: 'fan' } } });
+});
+
 it('sizes the network in latkit\'s lengths, and orders overlapping buses by kV alongside layout', () => {
   const document = new CaseDocument(fixture());
   const network = scene(document), buses = mark(network, 'buses')!, drawing = drawingOf(document, 'geographic');

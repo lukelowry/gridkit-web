@@ -23,12 +23,6 @@ export interface PlotAxis {
   readonly to: number;
 }
 
-/** Last known viewport, independent of the rows recorded and playback. */
-export interface PlotCamera extends PlotViewport {
-  /** Increment only to command the view, including repeated Fit requests. */
-  readonly version: number;
-}
-
 /** What the plot draws, independent of execution and transport. */
 export interface PlotData {
   /** The quantity's time tiles: latkit fetches the detail the plot window shows. */
@@ -38,5 +32,9 @@ export interface PlotData {
   readonly basis: Basis;
   /** The time they deviate from, or the first sample without one. */
   readonly reference: number | null;
-  readonly camera: PlotCamera;
+  /**
+   * Where the plot looks, independent of the rows recorded and playback: a new one commands the view, as Fit, a new measure, or a
+   * new run does, and a gesture makes none.
+   */
+  readonly camera: PlotViewport;
 }

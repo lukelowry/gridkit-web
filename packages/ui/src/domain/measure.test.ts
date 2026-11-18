@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { affine, defaultBand, fieldOf, measureOf, measureUnit, percentable, referenceField, type Basis } from './measure.js';
+import { affine, defaultBand, fieldOf, flowReach, measureOf, measureUnit, percentable, referenceField, type Basis } from './measure.js';
 
 it('names one sampled field for each measure, and reads it back', () => {
   for (const basis of ['value', 'change', 'percent'] as Basis[]) expect(measureOf(fieldOf({ output: 'Vm', basis }))).toEqual({ output: 'Vm', basis });
@@ -30,4 +30,11 @@ it('gives every deviation a band, from the output where it has its own', () => {
   expect(defaultBand({ output: 'Vm', basis: 'change' })).toBe(0.1);
   expect(defaultBand({ output: 'omega', basis: 'percent' })).toBe(5);
   expect(defaultBand({ output: 'omega', basis: 'change' })).toBe(1);
+});
+
+it('moves comets at full speed from a branch power its own, and from any deviation its band', () => {
+  expect(flowReach({ output: 'p1', basis: 'value' })).toBe(flowReach({ output: 'p2', basis: 'value' }));
+  expect(flowReach({ output: 'p1', basis: 'value' })).toBeGreaterThan(0);
+  expect(flowReach({ output: 'omega', basis: 'value' })).toBe(1);
+  expect(flowReach({ output: 'Vm', basis: 'change' })).toBe(defaultBand({ output: 'Vm', basis: 'change' }));
 });

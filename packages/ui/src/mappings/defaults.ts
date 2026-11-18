@@ -120,11 +120,18 @@ export type Palette = Record<keyof typeof paletteTokens, string>;
 const tokens = Object.fromEntries(Object.entries(paletteTokens).map(([role, token]) => [role, `var(${token})`])) as Palette;
 export type SceneTheme = Exclude<Theme, string>;
 
-/** Shared UI tokens translated into the network's rendering theme. */
+/**
+ * Shared UI tokens translated into the network's rendering theme. Comets take the ground's color: every stroke they run along is
+ * fitted to read on that ground, so each comet reads on its stroke at the stroke's own contrast, in every theme and on a custom
+ * background.
+ */
 export function networkTheme(v: Preferences, palette: Palette = tokens, base: 'light' | 'dark' = 'light'): SceneTheme {
+  const background = v.networkBackground || palette.background;
   return {
-    base, background: v.networkBackground || palette.background,
-    vertex: { color: palette.vertex, radius: 5 }, edge: { color: null, width: 1.5 },
+    base, background,
+    vertex: { color: palette.vertex, radius: 5 },
+    edge: { color: null, width: 1.5, parallel: v.parallelBranches === 'overlap' ? null : { gap: v.parallelGap, converge: v.parallelBranches } },
+    flow: { color: v.flowColor || background, spacing: v.flowSpacing, length: v.flowLength, width: v.flowWidth },
     line: { color: palette.line }, missing: '#808080', grid: { color: v.networkGridColor || palette.grid, spacing: v.networkGridSpacing },
     text: { color: v.networkTextColor || palette.text,
       font: `${v.networkFont || 'IBM Plex Sans'}, system-ui, sans-serif`, size: v.networkFontSize,
@@ -177,6 +184,8 @@ export function resolveNetwork({ source, preferences: v, theme = networkTheme(v)
   const resolved = resolveMappings(catalog, userDefaults.network, caseOverrides.network, target => source.fields(target), !!source.simulation);
   const measure = source.measure ?? { output: 'Vm', basis: 'value' as const };
   theme = mergeTheme(theme, resolved.theme);
+  // Comets keep the ground a view's own theme sets, unless a comet color is chosen.
+  if (!v.flowColor && record(resolved.theme.flow)?.color === undefined) theme = { ...theme, flow: { ...theme.flow, color: theme.background } };
   const position = positionOf(earthSpace(space) ? 'geographic' : 'network');
   const { radius, width } = fittedSizes(source.drawing, theme, v.networkMinRadius);
   const height = source.drawing?.height ?? 0;

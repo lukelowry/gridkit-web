@@ -36,8 +36,18 @@ export function channelsOf(quantity: Quantity, elements: readonly ElementRef[]):
   });
 }
 
-/** What an output measures. */
-const outputNames: Readonly<Record<string, string>> = { Vm: 'Voltage magnitude', Va: 'Voltage angle', omega: 'Speed' };
+/**
+ * What an output measures. A branch's power and current are what it delivers into the bus at its from end (1) or its to end (2),
+ * so its power into the to bus is positive while power flows from its from bus to its to bus.
+ */
+const outputNames: Readonly<Record<string, string>> = {
+  Vm: 'Voltage magnitude', Va: 'Voltage angle', Vr: 'Real voltage', Vi: 'Imaginary voltage',
+  omega: 'Speed', p: 'Real power', q: 'Reactive power', delta: 'Rotor angle',
+  p1: 'Real power into from bus', q1: 'Reactive power into from bus', im1: 'Current magnitude at from bus',
+  ir1: 'Real current into from bus', ii1: 'Imaginary current into from bus',
+  p2: 'Real power into to bus', q2: 'Reactive power into to bus', im2: 'Current magnitude at to bus',
+  ir2: 'Real current into to bus', ii2: 'Imaginary current into to bus',
+};
 export const outputLabel = (output: string) => outputNames[output] ?? output;
 
 /** A quantity never combines different units or bus/device scopes. */

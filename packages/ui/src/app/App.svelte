@@ -50,7 +50,7 @@
   const resultsId = $props.id();
   let colorScale = $state.raw<ColorScale | null>(null);
   const preferences = createPreferences();
-  const workspace = new Workspace({ get simulation() { return simulation; }, focusTable: () => table?.focus(), focusSolver: () => solver?.focus(), focusWelcome: () => welcome?.focus(), solverInvalid: () => solver?.controls().invalid ?? false });
+  const workspace = new Workspace({ get simulation() { return simulation; }, defaultMappings: () => preferences.mappings, focusTable: () => table?.focus(), focusSolver: () => solver?.focus(), focusWelcome: () => welcome?.focus(), solverInvalid: () => solver?.controls().invalid ?? false });
   const { caseSession, dialogs: stack, open, openPreferences, openExport, lookup, runStudy, choose, chooseOnCanvas, openElement, changeView,
     closeCase, openFile, download, downloadCaseFile } = workspace;
   const { showing, close, pending } = stack;

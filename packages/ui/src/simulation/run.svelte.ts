@@ -7,7 +7,7 @@ import { latkit } from '../ui/latkit.js';
 import { channelsOf, pinnedSeriesLimit, quantitiesOf, type Quantity } from './channels.js';
 import { sameReference } from '../domain/entries.js';
 import { BranchState, branchStateDataset } from './branches.js';
-import { compile, switchable, type Channel, type SimulationEvent, type Study } from '@gridkit/library/gridkit';
+import { compile, switchable, type Channel, type SimulationEvent, type Study, type WantedOutput } from '@gridkit/library/gridkit';
 import type { SampledField } from './sampled.js';
 import { PlotFeed } from './plot-feed.svelte.js';
 import type { PlotViewport } from './plot.js';
@@ -81,10 +81,11 @@ export class RunSession {
   #switching: Data | undefined;
   #observer = new Feed();
 
-  constructor(client: Solver, document: CaseDocument, version: number, study: Study, carried: RunPreferences) {
+  /** Runs `study` of `document`, recording what the views read of it (`wanted`). */
+  constructor(client: Solver, document: CaseDocument, version: number, study: Study, wanted: readonly WantedOutput[], carried: RunPreferences) {
     study = $state.snapshot(study);
     // Compiled now, so later settings never change what runs; a case GridKit cannot take fails the run, not the click that asked for it.
-    const compiled = (async () => compile(document, study))();
+    const compiled = (async () => compile(document, study, wanted))();
     const { tmax, events = [], dt_monitor } = structuredClone(study);
     const branches = new Map(document.rows('devices').filter(switchable).map(row => [String(row.value.id), row.ref.id]));
     this.caseVersion = version;

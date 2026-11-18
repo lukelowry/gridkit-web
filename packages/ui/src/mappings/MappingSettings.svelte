@@ -53,7 +53,12 @@
     ...(mark.kind === 'vertices' ? [
       { id: 'radius', label: 'Radius', option: 'radius', control: 'number' as const },
       { id: 'elevation', label: 'Elevation', option: 'elevation', control: 'number' as const, range: [0, height || 40] as const },
-    ] : [{ id: 'width', label: 'Width', option: 'width', control: 'number' as const }]) as Row[],
+    ] : [
+      { id: 'width', label: 'Width', option: 'width', control: 'number' as const },
+      // Comets along each edge, in CSS pixels a second, toward its to end or back: a branch's real power into its to bus moves them
+      // the way power flows.
+      { id: 'flow', label: 'Flow', option: 'flow', control: 'speed' as const, range: [-60, 60] as const, unset: 'Off' },
+    ]) as Row[],
     { id: 'label', label: 'Label', option: 'label', control: 'label' },
   ];
   const rowValue = (options: Record<string, unknown>, row: Row) => options[row.option];

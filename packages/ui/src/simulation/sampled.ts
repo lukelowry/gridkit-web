@@ -1,9 +1,10 @@
 import { untrack } from 'svelte';
 import { field, type Expr, type ExprInput } from 'latkit';
-import { record, targetKey, type CaseDocument, type ElementTarget, type FieldInfo } from '@gridkit/library';
-import { fieldsIn } from '../domain/views.js';
+import { record, targetKey, type CaseDocument, type ElementTarget, type FieldInfo, type SavedViews } from '@gridkit/library';
+import { defaultMarks, fieldsIn } from '../domain/views.js';
+import { resolveMappings } from '../mappings/resolve.js';
 import { outputLabel } from './channels.js';
-import { recordedOutputs, type Channel } from '@gridkit/library/gridkit';
+import { recordableOutputs, type Channel, type WantedOutput } from '@gridkit/library/gridkit';
 import { defaultBand, measureOf, referenceField } from '../domain/measure.js';
 import { recordingTable } from './recording-plan.js';
 
@@ -19,8 +20,9 @@ type FieldLookup = (target: ElementTarget) => readonly FieldInfo[];
 const fieldLookups = new WeakMap<CaseDocument, FieldLookup>();
 
 /**
- * A case's fields beside what a run of it records, the same before, during, and after one. A mapping can name them at any time;
- * a basis belongs to the field that names it, not to this list.
+ * A case's fields beside every output a run of it can record, the same before, during, and after one. A mapping can name any of
+ * them at any time, and a run records what the mappings name (`mappedOutputs`); a basis belongs to the field that names it, not
+ * to this list.
  */
 export function simulationFields(document: CaseDocument): FieldLookup {
   const kept = fieldLookups.get(document);
@@ -38,7 +40,7 @@ export function simulationFields(document: CaseDocument): FieldLookup {
       scanned.add(target.collection);
       for (const row of document.rows(target.collection)) {
         const keys = [targetKey({ collection: target.collection }), targetKey({ collection: target.collection, class: String(row.value.class) })];
-        for (const { id, unit } of recordedOutputs(row)) {
+        for (const { id, unit } of recordableOutputs(row)) {
           for (const group of keys) {
             let outputs = recorded.get(group);
             if (!outputs) recorded.set(group, outputs = new Map());
@@ -56,6 +58,20 @@ export function simulationFields(document: CaseDocument): FieldLookup {
   };
   fieldLookups.set(document, lookup);
   return lookup;
+}
+
+/**
+ * The outputs the network's mappings read, of the elements each reads them of: a run records them beside what it always does, so
+ * a mapping of any output its elements' models have draws once a run has it.
+ */
+export function mappedOutputs(document: CaseDocument, userDefaults: SavedViews, caseOverrides: SavedViews): WantedOutput[] {
+  const { marks } = resolveMappings(defaultMarks(document.targets), userDefaults.network, caseOverrides.network, simulationFields(document), true);
+  const wanted = new Map<string, WantedOutput>();
+  for (const mark of marks) for (const name of fieldsIn(Object.values(mark.options)).flatMap(id => sampledName(id) ?? [])) {
+    const want: WantedOutput = { ...mark.target, output: measureOf(name).output };
+    wanted.set(JSON.stringify([want.collection, want.class ?? null, want.output]), want);
+  }
+  return [...wanted.values()];
 }
 
 /**

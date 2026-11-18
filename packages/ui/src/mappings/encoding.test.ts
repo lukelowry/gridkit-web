@@ -42,6 +42,16 @@ describe('encodings preserve latkit values', () => {
       expect(nodeOf(encoding)).toBe(value);
     }
   });
+  it('reads a speed either way: a field reaching ±its range moves at ±its speed, and anything one-sided is a formula', () => {
+    const flow = { scale: [-60, 60], value: '$simulation.p1', domain: [-2, 2] };
+    expect(encodingOf(flow, 'speed')).toEqual({ kind: 'scale', field: 'simulation.p1', scale: [-60, 60], domain: [-2, 2] });
+    expect(optionValue('flow', nodeOf(encodingOf(flow, 'speed')))).toEqual(flow);
+    for (const value of [12, -12, '$simulation.p1']) expect(optionValue('flow', nodeOf(encodingOf(value, 'speed')))).toEqual(value);
+    // A domain fitted to what is shown, or a range that does not pass through 0, would move comets where nothing flows.
+    for (const value of [{ ...flow, domain: undefined }, { ...flow, domain: 'all' }, { ...flow, domain: [0, 2] }, { ...flow, scale: [0, 60] }])
+      expect(encodingOf(value, 'speed').kind).toBe('formula');
+    expect(fieldCompatible({ id: 'simulation.p1', label: 'p1', kind: 'number', presence: { present: 1, total: 1 } }, 'speed')).toBe(true);
+  });
   it('rejects reversed domains and invalid limits', () => {
     const scale = { kind: 'scale' as const, field: 'params.kv', scale: [3, 12] as [number, number] };
     expect(() => nodeOf({ ...scale, domain: [765, 69] })).toThrow('maximum');

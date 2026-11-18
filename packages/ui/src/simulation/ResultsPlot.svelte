@@ -35,7 +35,7 @@
   let typography = $state.raw<{ font: string; size: number }>();
   let hit = $state.raw<Hit | null>(null);
   let appliedView: View | undefined;
-  let appliedVersion = -1;
+  let appliedCamera: PlotViewport | undefined;
   export function focus() { canvas.focus({ preventScroll: true }); }
   // Each changes only when what is drawn does, so a new camera re-derives nothing.
   const source = $derived(plot.source), quantity = $derived(plot.quantity), camera = $derived(plot.camera);
@@ -95,7 +95,7 @@
         if (disposed) return;
         live = await View.create(canvas, scene, { sources: [source], camera: { x: [...opening.x], y: opening.y ? [...opening.y] : null } });
         if (disposed) { live.destroy(); return; }
-        appliedView = live; appliedVersion = camera.version;
+        appliedView = live; appliedCamera = camera;
         listeners.push(live.on('at', at => onseek(at)), live.on('hovered', event => { hit = event.hit; onhover(elements.channel(hit?.row ?? null)?.element ?? null); }),
           live.on('selection', ({ rows, trigger }) => {
             if (!trigger) return;
@@ -122,12 +122,12 @@
   $effect(() => { if (view) view.selection = elements.rows(selected); });
   $effect(() => { if (view) view.hovered = hoveredChannel ? { data: source.name, table: 'Trace', id: hoveredChannel.column } : null; });
   $effect(() => { if (view) return playhead.attach(view); });
-  // Only a command moves the camera: Fit, or a new measure.
+  // Only a command moves the camera: Fit, a new measure, or a new run.
   $effect(() => {
     const current = view, commanded = camera;
-    if (!current || (current === appliedView && commanded.version === appliedVersion)) return;
+    if (!current || (current === appliedView && commanded === appliedCamera)) return;
     current.camera = { x: [...commanded.x], y: commanded.y ? [...commanded.y] : null };
-    appliedView = current; appliedVersion = commanded.version;
+    appliedView = current; appliedCamera = commanded;
   });
   watchNotice(() => error ? 'The plot could not be drawn. ' + error : '', () => ({ action: { label: 'Retry plot', run: onretry } }));
 </script>

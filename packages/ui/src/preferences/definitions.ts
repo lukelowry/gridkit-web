@@ -70,12 +70,23 @@ export const preferenceFields = {
   geographyUrl: only(url('network', 'Layers', 'GeoJSON URL'), 'geography', ['custom']),
   networkMinRadius: num('network', 'Geometry', 'Minimum bus radius', 1, 0, 10, .5, 'px'),
   dashPeriod: num('network', 'Geometry', 'Dash length', 12, 1, 64, 1, 'px'),
+  // Circuits between the same two buses run side by side and come together at each bus as chosen. A gap a little wider than the
+  // widest stroke keeps each circuit its own line, and nine of them within 30 px.
+  parallelBranches: choice('network', 'Geometry', 'Parallel branches', ['fan', 'squeeze', 'straight', 'overlap'], 'fan', {
+    fan: 'Fan in', squeeze: 'Squeeze', straight: 'Straight', overlap: 'Overlapped',
+  }),
+  parallelGap: only(num('network', 'Geometry', 'Parallel branch gap', 2, 0, 12, .5, 'px'), 'parallelBranches', ['fan', 'squeeze', 'straight']),
+  // Comets along the edges a flow is mapped for, each a head and a fading tail.
+  flowSpacing: num('network', 'Flow', 'Comet spacing', 64, 8, 400, 1, 'px'),
+  flowLength: num('network', 'Flow', 'Comet length', 24, 2, 200, 1, 'px'),
+  flowWidth: num('network', 'Flow', 'Comet width', 4, 1, 16, .5, 'px'),
   networkFont: font('network'),
   networkFontSize: num('network', 'Labels', 'Text size', 12, 6, 32, 1, 'px'),
   networkLabelHalo: num('network', 'Labels', 'Label halo', 2, 0, 8, .5, 'px'),
   networkBackground: color('network', 'Colors', 'Background'),
   networkTextColor: color('network', 'Colors', 'Labels'),
   networkGridColor: color('network', 'Colors', 'Grid'),
+  flowColor: color('network', 'Colors', 'Comets'),
   defaultProjection: choice('network', 'Camera', 'Initial projection', ['flat', 'tilt', 'globe'], 'flat'),
   hoverScale: num('network', 'Highlight', 'Bus hover scale', 1.1, 1, 3, .1),
   wheel: choice('interaction', 'Navigation', 'Wheel zoom', ['wheel', 'modifier'], 'wheel', { wheel: 'Always', modifier: 'With Ctrl or Cmd' }),

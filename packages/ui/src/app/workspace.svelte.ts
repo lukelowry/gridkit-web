@@ -1,5 +1,5 @@
 import { tick } from 'svelte';
-import { caseReadiness, serializeCase, targetOf, type ElementRecord, type ElementRef } from '@gridkit/library';
+import { caseReadiness, serializeCase, targetOf, type ElementRecord, type ElementRef, type SavedViews } from '@gridkit/library';
 import { entriesOf, entryOf, sameReference } from '../domain/entries.js';
 import { representation } from '../domain/views.js';
 import { errorMessage } from '../ui/errors.js';
@@ -8,6 +8,7 @@ import { preload } from '../ui/latkit.js';
 import { isGeographic } from '../rendering/data.js';
 import type { ExportRequest } from '../rendering/export.js';
 import type { Simulation } from '../simulation/simulation.svelte.js';
+import { mappedOutputs } from '../simulation/sampled.js';
 import { withEvent, type EventType, type Study } from '@gridkit/library/gridkit';
 import type { MenuItem } from '../ui/menu.js';
 import { notify } from '../ui/toasts.svelte.js';
@@ -22,6 +23,8 @@ export const viewLabels: Record<ViewName, string> = { network: 'Network', table:
 
 export interface WorkspaceOptions {
   readonly simulation: Simulation;
+  /** The mappings every view of this browser starts from, under each case's own. */
+  defaultMappings(): SavedViews;
   /** Moves focus into the Table. */
   focusTable(): void;
   /** Opens the Solver view at its form, without starting text entry. */
@@ -78,11 +81,13 @@ export class Workspace {
    * with its clearing), never adding to the events an earlier run used.
    */
   actionStudy(type: EventType, row: ElementRecord) { return withEvent({ ...$state.snapshot(this.caseSession.study), events: [] }, type, row); }
-  /** Runs the study as Solver holds it. */
+  /** Runs the study as Solver holds it, recording what the network's mappings read. */
   runStudy = (next?: Study) => {
     if (!this.simulation.available || this.simulation.busy || this.solverInvalid) return false;
     if (next) this.caseSession.updateStudy(next);
-    this.simulation.start(this.current.document, this.current.caseVersion, this.caseSession.study);
+    const document = this.current.document;
+    this.simulation.start(document, this.current.caseVersion, this.caseSession.study,
+      mappedOutputs(document, this.#options.defaultMappings(), this.caseSession.mappings));
     return true;
   };
 

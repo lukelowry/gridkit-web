@@ -3,8 +3,8 @@ import { recognize } from '../domain/views.js';
 import { fieldGroup, record, type FieldInfo } from '@gridkit/library';
 import { numericIssue, type NumericConstraint } from './numeric.js';
 
-/** What a mark option takes: a color, a number, or a label's text. */
-export type OptionControl = 'color' | 'number' | 'label';
+/** What a mark option takes: a color, a number, a speed either way along a stroke, or a label's text. */
+export type OptionControl = 'color' | 'number' | 'speed' | 'label';
 export type Domain = [low: number, high: number] | 'all';
 /**
  * A mark option as the UI reads it. Every saved value has one, and anything the UI has no controls for is a formula, its
@@ -25,6 +25,8 @@ export function fieldCompatible(info: FieldInfo, control: OptionControl) {
 
 const isPair = (input: unknown): input is [number, number] => Array.isArray(input) && input.length === 2 && input.every(n => typeof n === 'number');
 const isDomain = (input: unknown): input is Domain | undefined => input === undefined || input === 'all' || isPair(input);
+/** `±reach`, as a speed reads a field: no value moves nothing, and each sign moves its own way. */
+const isSymmetric = (input: unknown): input is [number, number] => isPair(input) && input[1] > 0 && input[0] === -input[1];
 const withDomain = (domain: Domain | undefined) => domain === undefined ? {} : { domain };
 
 export function encodingOf(node: unknown, control: OptionControl): Encoding {
@@ -39,12 +41,15 @@ export function encodingOf(node: unknown, control: OptionControl): Encoding {
   }
   const preset = recognize(node);
   if (preset.kind === 'constant') return (control === 'color' ? typeof node === 'string' : typeof node === 'number') ? { kind: 'fixed', value: node as number | string } : formula;
-  if (preset.kind === 'field') return control === 'number' ? { kind: 'field', field: preset.field } : formula;
+  if (preset.kind === 'field') return control === 'number' || control === 'speed' ? { kind: 'field', field: preset.field } : formula;
   if (preset.kind === 'colormap' && control === 'color' && isDomain(preset.domain)
     && (typeof preset.colormap === 'string' || Array.isArray(record(preset.colormap)?.colors)))
     return { kind: 'colormap', field: preset.field, colormap: preset.colormap as Colormap, ...withDomain(preset.domain) };
   if (preset.kind === 'scale' && control === 'number' && isDomain(preset.domain) && isPair(preset.range))
     return { kind: 'scale', field: preset.field, scale: preset.range, ...withDomain(preset.domain) };
+  // A speed reads its field either way: ±reach moves at ±its speed, and no value moves nothing.
+  if (preset.kind === 'scale' && control === 'speed' && isSymmetric(preset.domain) && isSymmetric(preset.range))
+    return { kind: 'scale', field: preset.field, scale: preset.range, domain: preset.domain };
   return formula;
 }
 

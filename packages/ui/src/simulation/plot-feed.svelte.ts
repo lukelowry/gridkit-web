@@ -24,7 +24,6 @@ export class PlotFeed {
   plot = $state.raw<PlotData>();
   #set: TileSet | undefined;
   #viewport: PlotViewport | null = null;
-  #camera = 0;
 
   constructor(private options: PlotFeedOptions) {}
 
@@ -41,7 +40,7 @@ export class PlotFeed {
     const set: TileSet = { columns, ...series && { series }, basis, reference }, source = this.options.results.tiles(set);
     this.#set = set;
     if (this.#viewport) this.#viewport = { ...this.#viewport, y: null };
-    const camera = { version: ++this.#camera, x: this.#viewport?.x ?? this.options.timeline, y: null };
+    const camera = { x: this.#viewport?.x ?? this.options.timeline, y: null };
     this.plot = { source, quantity, basis, reference, camera };
   }
   clear() { this.plot = undefined; this.#set = undefined; }
@@ -50,6 +49,6 @@ export class PlotFeed {
   fit() {
     if (!this.plot) return;
     this.#viewport = null;
-    this.plot = { ...this.plot, camera: { version: ++this.#camera, x: this.options.timeline, y: null } };
+    this.plot = { ...this.plot, camera: { x: this.options.timeline, y: null } };
   }
 }
