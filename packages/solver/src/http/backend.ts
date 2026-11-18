@@ -1,7 +1,7 @@
 import { isTerminal, runStates, SolverError, type Engine, type RunId } from '../index.js';
 import type { RunStatus } from '../protocol.js';
 import type { Backend, Report } from '../serve.js';
-import { rowsReply } from './frames.js';
+import { planesReply } from './frames.js';
 import type { Options } from './index.js';
 
 /** The failure a service answered with, as `{ code, message }`, else one naming its status. */
@@ -112,8 +112,8 @@ export async function open({ base }: Options, report: Report): Promise<Backend |
       if (!held.address) { held.uploading.abort(); return; }
       await call(`${held.address}/cancel`, { method: 'POST', signal: life.signal }, true);
     },
-    rows: async (run, query, signal) => rowsReply(await call(`${address(run)}/rows`, post(query, signal), true), query),
-    entries: async (run, query, signal) => rowsReply(await call(`${address(run)}/entries`, post(query, signal), true), query),
+    rows: async (run, query, signal) => planesReply(await call(`${address(run)}/rows`, post(query, signal), true), query),
+    entries: async (run, query, signal) => planesReply(await call(`${address(run)}/entries`, post(query, signal), true), query),
     // The service writes each file; the browser downloads it from there, and the page holds none of it.
     artifact: async (run, name) => ({ header: { href: `${address(run)}/${name}` }, parts: [] }),
     close() { life.abort(); runs.clear(); },

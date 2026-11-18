@@ -1,5 +1,5 @@
 import { SolverError, type EntriesQuery, type RowsQuery } from '../index.js';
-import type { Reply, RowsHeader } from '../protocol.js';
+import type { PlanesHeader, Reply } from '../protocol.js';
 
 // The service's replies: a length-prefixed JSON header, then its planes. Each is refused before it is held if it is more than was
 // asked for.
@@ -46,10 +46,10 @@ class Body {
 }
 
 /** Rows, or entries of a level: their header, then one part, their planes. */
-export async function rowsReply(response: Response, query: RowsQuery | EntriesQuery): Promise<Reply<RowsHeader>> {
+export async function planesReply(response: Response, query: RowsQuery | EntriesQuery): Promise<Reply<PlanesHeader>> {
   const body = new Body(response.body);
   try {
-    const header = await body.header<RowsHeader>(), planes = 'level' in query && query.level ? 2 : 1;
+    const header = await body.header<PlanesHeader>(), planes = 'level' in query && query.level ? 2 : 1;
     const size = 8 * planes * header.count * (1 + query.columns.length);
     if (size > query.maxBytes) throw invalid();
     return { header, parts: [await body.take(size)] };

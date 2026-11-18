@@ -257,13 +257,13 @@ func TestARunRecordsAndServesWhatGridKitWrites(t *testing.T) {
 		t.Fatalf("%+v", status)
 	}
 
-	var rows RowsHeader
+	var rows PlanesHeader
 	values := answer(t, postJSON(t, address+"/rows", RowsQuery{Columns: []string{"Bus_1_Va"}, MaxBytes: 4096}), &rows)
 	if rows.State != "completed" || rows.Rows != 2 || rows.Count != 2 || len(values) != 4 || values[3] != 4 {
 		t.Fatalf("%+v %v", rows, values)
 	}
 
-	var entries RowsHeader
+	var entries PlanesHeader
 	values = answer(t, postJSON(t, address+"/entries", EntriesQuery{Columns: []string{"Bus_1_Vm"}, Count: 8, MaxBytes: 4096}), &entries)
 	if entries.State != "completed" || entries.Count != 2 || len(values) != 4 || values[3] != 3 {
 		t.Errorf("%+v %v", entries, values)
@@ -458,7 +458,7 @@ func TestCancellingKeepsAReadablePartialResult(t *testing.T) {
 	if status.State != "cancelled" || status.Rows != 2 {
 		t.Errorf("%+v", status)
 	}
-	var header RowsHeader
+	var header PlanesHeader
 	answer(t, postJSON(t, address+"/entries", EntriesQuery{Columns: []string{"a"}, Count: 2, MaxBytes: 4096}), &header)
 	if header.State != "cancelled" {
 		t.Errorf("%+v", header)
@@ -501,7 +501,7 @@ func TestAWaitingReadWakesOnNewRowsAndStopsWithItsReader(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	began := time.Now()
-	var rows RowsHeader
+	var rows PlanesHeader
 	values := answer(t, postJSON(t, address+"/rows", RowsQuery{Columns: []string{"a"}, From: 1, Wait: true, MaxBytes: 4096}), &rows)
 	if rows.First != 1 || rows.Count != 1 || values[1] != 2 || time.Since(began) > 5*time.Second {
 		t.Fatalf("%+v %v after %v", rows, values, time.Since(began))

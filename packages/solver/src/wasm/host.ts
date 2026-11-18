@@ -1,5 +1,5 @@
 import { isTerminal, SolverError, type EntriesQuery, type Failure, type RowsQuery, type RunState } from '../index.js';
-import type { Reply, RowsHeader, RunStatus } from '../protocol.js';
+import type { PlanesHeader, Reply, RunStatus } from '../protocol.js';
 import type { GridKitEvent, GridKitStudy } from './gridkit.js';
 import { checkEntries, checkRows, readEntries, readRows } from './reads.js';
 import { expired, Store, timeRange, type Blocks } from './store.js';
@@ -176,7 +176,7 @@ export class Host {
   }
 
   /** Exact rows, as the solver service's rows answer them: one part, read for this reply alone. */
-  async rows(address: string, query: RowsQuery): Promise<Reply<RowsHeader>> {
+  async rows(address: string, query: RowsQuery): Promise<Reply<PlanesHeader>> {
     const run = this.#run(address), store = run.recording(), plan = checkRows(store, query);
     if (query.wait) await run.hold(plan.from);
     const state = run.current(), view = store.extent, { first, count, values } = readRows(store, view, plan);
@@ -184,7 +184,7 @@ export class Host {
   }
 
   /** Entries of one level, as the solver service's entries answer them: one part, read for this reply alone. */
-  async entries(address: string, query: EntriesQuery): Promise<Reply<RowsHeader>> {
+  async entries(address: string, query: EntriesQuery): Promise<Reply<PlanesHeader>> {
     const run = this.#run(address), store = run.recording(), columns = checkEntries(store, query);
     const state = run.current(), view = store.extent, { first, count, values } = readEntries(store, view, columns, query);
     return { header: { rows: view.rows, state, range: timeRange(view), first, count }, parts: [values.buffer] };

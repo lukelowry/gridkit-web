@@ -7,18 +7,6 @@ import (
 	"net/http"
 )
 
-// A reply is one transaction: a length-prefixed JSON header, then the FP64 planes it describes.
-func writeHeader(w http.ResponseWriter, header any) error {
-	meta, err := json.Marshal(header)
-	if err != nil {
-		return err
-	}
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Type", "application/octet-stream")
-	_, err = w.Write(append(binary.LittleEndian.AppendUint32(make([]byte, 0, 4+len(meta)), uint32(len(meta))), meta...))
-	return err
-}
-
 // RowsQuery asks for exact rows of some columns: from a row, or the last at or before a time.
 type RowsQuery struct {
 	Columns []string `json:"columns"`
@@ -32,13 +20,28 @@ type RowsQuery struct {
 	MaxBytes int  `json:"maxBytes"`
 }
 
-// RowsHeader describes `count` rows or entries from `first`, then their planes.
-type RowsHeader struct {
+// PlanesHeader describes `count` rows or entries from `first`, then their planes.
+type PlanesHeader struct {
 	Rows  int         `json:"rows"`
 	State string      `json:"state"`
 	Range *[2]float64 `json:"range"`
 	First int         `json:"first"`
 	Count int         `json:"count"`
+}
+
+// writePlanes answers a read as one transaction: a length-prefixed JSON header, then the FP64 planes it describes.
+func writePlanes(w http.ResponseWriter, header PlanesHeader, values []float64) error {
+	meta, err := json.Marshal(header)
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/octet-stream")
+	if _, err := w.Write(append(binary.LittleEndian.AppendUint32(make([]byte, 0, 4+len(meta)), uint32(len(meta))), meta...)); err != nil {
+		return err
+	}
+	_, err = w.Write(raw(values))
+	return err
 }
 
 func (s *Service) rows(w http.ResponseWriter, r *http.Request) error {
@@ -77,7 +80,7 @@ func (s *Service) rows(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	view := store.extent.Load()
-	header := RowsHeader{Rows: view.rows, State: state, Range: view.timeRange(), First: query.From}
+	header := PlanesHeader{Rows: view.rows, State: state, Range: view.timeRange(), First: query.From}
 	if query.At != nil {
 		if header.First, header.Count, err = store.around(view, view.rows, *query.At, capacity); err != nil {
 			return err
@@ -91,11 +94,7 @@ func (s *Service) rows(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 	}
-	if err := writeHeader(w, header); err != nil {
-		return err
-	}
-	_, err = w.Write(raw(values))
-	return err
+	return writePlanes(w, header, values)
 }
 
 // EntriesQuery asks for `count` entries of one level from entry `first`: rows at level 0, and above it buckets of 8^level rows,
@@ -130,7 +129,7 @@ func (s *Service) entries(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	header := RowsHeader{Rows: view.rows, State: state, Range: view.timeRange(), First: query.First}
+	header := PlanesHeader{Rows: view.rows, State: state, Range: view.timeRange(), First: query.First}
 	header.Count = max(0, min(query.Count, view.entries(query.Level)-query.First))
 	var values []float64
 	if header.Count > 0 {
@@ -138,9 +137,5 @@ func (s *Service) entries(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 	}
-	if err := writeHeader(w, header); err != nil {
-		return err
-	}
-	_, err = w.Write(raw(values))
-	return err
+	return writePlanes(w, header, values)
 }

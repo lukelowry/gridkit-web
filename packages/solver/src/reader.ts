@@ -1,13 +1,13 @@
 import type { EntriesReply, ResultReader, RowsReply } from './index.js';
 import { envelopeOf, samplesOf } from './planes.js';
-import type { RowsHeader } from './protocol.js';
+import type { PlanesHeader } from './protocol.js';
 import { Asker } from './reply.js';
 
 export function reader(port: MessagePort): ResultReader {
   const asker = new Asker(port);
   /** The one part of a reply, and its header. */
   const read = async (question: Parameters<Asker['ask']>[0], signal?: AbortSignal) => {
-    const { header, parts } = await asker.ask<RowsHeader>(question, signal);
+    const { header, parts } = await asker.ask<PlanesHeader>(question, signal);
     let buffer = new ArrayBuffer(0);
     for await (const part of parts) buffer = part;
     return { header, buffer };

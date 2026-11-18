@@ -1,5 +1,5 @@
 import { Patch } from 'latkit';
-import { isTerminal, openReader, type Envelope, type ResultReader, type RunState, type Samples, type TimeRange } from '@gridkit/solver';
+import { isTerminal, openReader, type Envelope, type ResultReader, type Revision, type Samples } from '@gridkit/solver';
 import { affine, type Affine, type Basis } from '../domain/measure.js';
 import type { ResultsCommand, ResultsMessage, ResultsReply } from './results.js';
 import type { NetworkPlan } from './recording-plan.js';
@@ -22,11 +22,6 @@ export interface TileSet {
   readonly series?: readonly number[];
   readonly basis: Basis;
   readonly reference: number | null;
-}
-interface Revision {
-  rows: number;
-  state: RunState;
-  range: TimeRange | null;
 }
 export interface NetworkPage extends Revision {
   bytes: Uint8Array;
@@ -147,7 +142,7 @@ const chunkOf = (columns: number) => Math.max(8, Math.floor((1 << 17) / columns 
  * File `path` of `set`'s time tiles, as latkit fetches it: the manifest, the base dataset, or a span of one level. `shift` gives
  * each column's measure, taken in Float64 before the values become Float32.
  */
-export async function tileFile(reader: ResultReader, { columns, series }: TileSet, path: string,
+async function tileFile(reader: ResultReader, { columns, series }: TileSet, path: string,
   shift: () => Promise<((column: string) => Affine) | undefined>): Promise<Uint8Array> {
   const chunk = chunkOf(columns.length);
   if (path === 'frames.json') {

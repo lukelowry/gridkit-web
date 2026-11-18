@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import fixture from '../../test/stream.json';
 import type { Reply } from '../protocol.js';
-import { rowsReply } from './frames.js';
+import { planesReply } from './frames.js';
 
 function body(bytes: Uint8Array, fragment = bytes.length) {
   let offset = 0;
@@ -28,21 +28,21 @@ async function partsOf(reply: Reply<unknown>) {
 }
 
 it('reads what the solver writes, across fragmented transport reads', async () => {
-  const count = fixture.rows.length, rows = await rowsReply(answer(decoded(fixture.replies.rows), 3), { columns: fixture.columns, from: 0, maxBytes: 4096 });
+  const count = fixture.rows.length, rows = await planesReply(answer(decoded(fixture.replies.rows), 3), { columns: fixture.columns, from: 0, maxBytes: 4096 });
   expect(rows.header).toMatchObject({ rows: count, state: 'completed', range: [0, count - 1], first: 0, count });
   const [planes] = await partsOf(rows);
   expect([...new Float64Array(planes!, 0, count)]).toEqual(fixture.rows.map(row => row[0]));
   expect([...new Float64Array(planes!, 8 * count, count)]).toEqual(fixture.rows.map(row => row[1]));
 
   // A coarse level's starts, ends, minima and maxima: its whole bucket, and the one still filling.
-  const entries = await rowsReply(answer(decoded(fixture.replies.entries), 3), { columns: fixture.columns, level: 1, first: 0, count: 2, maxBytes: 4096 });
+  const entries = await planesReply(answer(decoded(fixture.replies.entries), 3), { columns: fixture.columns, level: 1, first: 0, count: 2, maxBytes: 4096 });
   expect(entries.header).toMatchObject({ rows: count, first: 0, count: 2 });
   expect([...new Float64Array((await partsOf(entries))[0]!)]).toEqual([0, 8, 7, 9, 0.7, 0.6, 1.3, 1.4]);
 });
 
 it('refuses a truncated reply, an unreadable header, and more than it asked for, before holding it', async () => {
   const whole = reply({ ...revision, first: 0, count: 2 }, Float64Array.of(0, 1, 10, 20));
-  const read = (bytes: Uint8Array, maxBytes = 4096) => rowsReply(answer(bytes), { columns: ['v'], from: 0, maxBytes });
+  const read = (bytes: Uint8Array, maxBytes = 4096) => planesReply(answer(bytes), { columns: ['v'], from: 0, maxBytes });
   await expect(read(whole.slice(0, -1))).rejects.toMatchObject({ code: 'protocol' });
   await expect(read(new Uint8Array(4))).rejects.toMatchObject({ code: 'protocol' });
   await expect(read(whole, 16)).rejects.toMatchObject({ code: 'protocol' });
@@ -50,6 +50,6 @@ it('refuses a truncated reply, an unreadable header, and more than it asked for,
   await expect(read(broken)).rejects.toMatchObject({ code: 'protocol' });
   await expect(read(whole.slice(0, 2))).rejects.toMatchObject({ code: 'protocol' });
   // Two coarse entries are twice the bytes of two rows.
-  await expect(rowsReply(answer(reply({ ...revision, first: 0, count: 2 }, new Float64Array(8))), { columns: ['v'], level: 1, first: 0, count: 2, maxBytes: 63 }))
+  await expect(planesReply(answer(reply({ ...revision, first: 0, count: 2 }, new Float64Array(8))), { columns: ['v'], level: 1, first: 0, count: 2, maxBytes: 63 }))
     .rejects.toMatchObject({ code: 'protocol' });
 });

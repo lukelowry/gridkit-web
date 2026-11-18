@@ -91,7 +91,7 @@ func TestEntriesStopAtWhatIsRecordedAndRefuseWhatCannotFit(t *testing.T) {
 		{EntriesQuery{Columns: a, First: 10, Count: 8, MaxBytes: 4096}, 0},
 		{EntriesQuery{Columns: a, Level: 1, Count: 8, MaxBytes: 4096}, 2},
 	} {
-		var header RowsHeader
+		var header PlanesHeader
 		if answer(t, postJSON(t, address, check.query), &header); header.Count != check.count {
 			t.Errorf("%+v: %+v", check.query, header)
 		}

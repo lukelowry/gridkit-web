@@ -49,6 +49,6 @@ export type Answer =
 export interface Reply<H> { readonly header: H; readonly parts: readonly ArrayBuffer[] | AsyncIterable<ArrayBuffer> }
 
 /** `count` rows or entries from `first`: one part, their planes as planes.ts reads them. */
-export interface RowsHeader extends Revision { readonly first: number; readonly count: number }
+export interface PlanesHeader extends Revision { readonly first: number; readonly count: number }
 /** A file: a link the browser downloads itself, or its bytes as parts. */
 export interface ArtifactHeader { readonly href?: string }

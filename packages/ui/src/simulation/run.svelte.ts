@@ -130,8 +130,10 @@ export class RunSession {
   }
 
   #extend(range: TimeRange) {
-    this.range = [range[0], Math.max(this.range[1], range[1])];
-    if (this.live) this.playhead.show(this.range[1]);
+    const end = Math.max(this.range[1], range[1]);
+    if (range[0] === this.range[0] && end === this.range[1]) return;
+    this.range = [range[0], end];
+    if (this.live) this.playhead.show(end);
   }
 
   /** Installs the sampled fields the network's scene reads. */

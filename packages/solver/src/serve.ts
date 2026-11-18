@@ -1,5 +1,5 @@
 import { SolverError, type ArtifactName, type Engine, type EntriesQuery, type RowsQuery, type RunId, type RunRequest } from './index.js';
-import type { ArtifactHeader, Command, Event, Reply, RowsHeader, RunStatus } from './protocol.js';
+import type { ArtifactHeader, Command, Event, PlanesHeader, Reply, RunStatus } from './protocol.js';
 import { answer } from './reply.js';
 
 /** What an implementation does in its worker. serve() does the rest: the page, each reader, aborts, and moving every part. */
@@ -8,8 +8,8 @@ export interface Backend {
   /** Resolves once `run` is accepted, or rejects it (busy, invalid); its statuses follow through the report. */
   start(run: RunId, request: RunRequest): Promise<void>;
   cancel(run: RunId): Promise<void>;
-  rows(run: RunId, query: RowsQuery, signal: AbortSignal): Promise<Reply<RowsHeader>>;
-  entries(run: RunId, query: EntriesQuery, signal: AbortSignal): Promise<Reply<RowsHeader>>;
+  rows(run: RunId, query: RowsQuery, signal: AbortSignal): Promise<Reply<PlanesHeader>>;
+  entries(run: RunId, query: EntriesQuery, signal: AbortSignal): Promise<Reply<PlanesHeader>>;
   artifact(run: RunId, name: ArtifactName, signal: AbortSignal): Promise<Reply<ArtifactHeader>>;
   close(): void;
 }
