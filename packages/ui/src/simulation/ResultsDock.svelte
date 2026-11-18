@@ -180,9 +180,9 @@
         <p class="series-count" role="status">{plot?.quantity.channels.length ?? 0} of {run.quantity.channels.length} series · selected and pinned</p>
       {/if}
       {#if plot}
-        {#key plot.data}{#key plotAttempt}
-          <ResultsPlot bind:this={plotView} {selected} {hovered} {onselect} {onhover} ondetail={next => { detail = next; }} {plot} playhead={run.playhead} {preferences} onretry={retryPlot}
-            onseek={at => run.seek(at)} onviewport={(viewport, pixels, manual) => run.viewport(viewport, pixels, manual)} onaxis={next => { measured = next; }} />
+        {#key plot.source}{#key plotAttempt}
+          <ResultsPlot bind:this={plotView} {selected} {hovered} {onselect} {onhover} ondetail={next => { detail = next; }} {plot} rows={run.rows} playhead={run.playhead} {preferences} onretry={retryPlot}
+            onseek={at => run.seek(at)} onviewport={viewport => run.viewport(viewport)} onaxis={next => { measured = next; }} />
         {/key}{/key}
       {:else}
         <p class="results-empty" role="status">{run.plotMode === 'focused' && run.quantity

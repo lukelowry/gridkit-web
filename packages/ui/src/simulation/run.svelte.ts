@@ -40,6 +40,8 @@ export class RunSession {
   /** What the run offers to download, once it has ended. */
   artifacts = $state.raw<readonly Artifact[]>([]);
   range = $state.raw<TimeRange>([0, 0]);
+  /** How many rows the run has recorded, as it last said. */
+  rows = $state(0);
   /** Whether the time shown follows the run as it records. */
   live = $state(true);
   /** The quantity the plot shows; a bus quantity is the one the network reads too. */
@@ -98,7 +100,7 @@ export class RunSession {
       const run = this.#execution = client.start(request), results = this.#results = new RunResults(run.results());
       const parts = { results, extend: (range: TimeRange) => this.#extend(range), failed: (cause: unknown) => { this.error = errorMessage(cause); } };
       const recording = this.#recording = new Recording({ ...parts, rows: Math.ceil(tmax / dt_monitor) + 1 + 2 * events.length });
-      this.#plotFeed = new PlotFeed({ ...parts, timeline: this.timeline });
+      this.#plotFeed = new PlotFeed({ results, timeline: this.timeline });
       this.#switching = new Data(branchStateDataset);
       this.#branches = new BranchState(this.#switching, branches, events);
       void run.artifacts.then(artifacts => { this.artifacts = artifacts; }, () => {});
@@ -108,6 +110,7 @@ export class RunSession {
         this.busy = !isTerminal(update.state);
         if (update.state === 'failed') this.error = update.error.message;
         if (!update.progress) continue;
+        this.rows = update.progress.rows;
         this.#extend(update.progress.range);
         if (this.channels.length) continue;
         this.channels = channels;
@@ -185,7 +188,7 @@ export class RunSession {
     this.#showPlot();
   }
 
-  viewport(viewport: PlotViewport, pixels: number, manual = false) { this.#plotFeed?.viewport(viewport, pixels, manual); }
+  viewport(viewport: PlotViewport) { this.#plotFeed?.viewport(viewport); }
   fit() { this.#plotFeed?.fit(); }
 
   /** Follows the run as it records. */
@@ -222,7 +225,6 @@ export class RunSession {
     if (this.busy) void this.#execution?.cancel().catch(() => {});
     this.busy = false;
     this.#recording?.close();
-    this.#plotFeed?.close();
     this.#switching?.destroy();
     this.#results?.close();
   }

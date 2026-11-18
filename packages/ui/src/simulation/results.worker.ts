@@ -1,31 +1,26 @@
 import { Patch } from 'latkit';
-import { isTerminal, openReader, type Cursor, type ResultReader, type RunState, type SummaryReply, type Tile, type TimeRange } from '@gridkit/solver';
+import { isTerminal, openReader, type Envelope, type ResultReader, type RunState, type Samples, type TimeRange } from '@gridkit/solver';
 import { affine, type Affine, type Basis } from '../domain/measure.js';
 import type { ResultsCommand, ResultsMessage, ResultsReply } from './results.js';
 import type { NetworkPlan } from './recording-plan.js';
+import { plotDataset } from './plot.js';
 
 /** How often a feed that has caught up asks for more. */
 const interval = 1000 / 30;
 
 /** What the network draws, from the start, with reads and transfers bounded independently of its width. */
 export interface NetworkFeed {
-  readonly kind: 'network';
   readonly plan: NetworkPlan;
   /** Every Nth row, where the whole run would not fit. */
   readonly every: number;
   readonly maxBytes: number;
 }
-/** What the plot draws: `columns` over a time range, at the resolution of its pixels. */
-export interface PlotFeedRequest {
-  readonly kind: 'plot';
+/** What a plot's time tiles hold: `columns`, measured as `basis` from `reference`. */
+export interface TileSet {
   readonly columns: readonly string[];
   readonly basis: Basis;
   readonly reference: number | null;
-  readonly range: TimeRange;
-  readonly resolution: number;
-  readonly maxBytes: number;
 }
-export type FeedRequest = NetworkFeed | PlotFeedRequest;
 interface Revision {
   rows: number;
   state: RunState;
@@ -40,16 +35,6 @@ export interface NetworkPage extends Revision {
   reset: boolean;
   complete: boolean;
 }
-/** One tile of a plot's update, which commits as a whole: history first, sealed for the next update, then the edges around it. */
-export interface PlotPage extends Revision {
-  history: Uint8Array;
-  edges: Uint8Array;
-  begin: boolean;
-  reset: boolean;
-  seal: boolean;
-  complete: boolean;
-}
-
 /** The values each plotted column's measure is taken from, by column. */
 type References = ReadonlyMap<string, number>;
 /**
@@ -65,7 +50,8 @@ function valuesOf(planes: Float64Array[], shifts?: readonly Affine[]) {
   }
   return values;
 }
-export function addTile(patch: Patch, { level, first, block }: Pick<Tile, 'level' | 'first' | 'block'>, shift?: (column: string) => Affine) {
+/** `block`, entries of `level` from `first`, as latkit's frames of the plot's traces. */
+function addTile(patch: Patch, level: number, first: number, block: Samples | Envelope, shift?: (column: string) => Affine) {
   const shifts = shift && block.columns.map(shift);
   if (block.kind === 'samples') {
     patch.frames('Trace', 'value', { level, first, at: block.times, values: valuesOf([block.values], shifts) });
@@ -76,16 +62,6 @@ export function addTile(patch: Patch, { level, first, block }: Pick<Tile, 'level
   }
 }
 
-/** Tiles of `columns` as a plot page; `flags` say where the page falls in its update. */
-export function packPlot(columns: readonly string[], tiles: readonly Tile[], basis: Basis, references: References | undefined,
-  flags: Revision & Pick<PlotPage, 'begin' | 'reset' | 'seal' | 'complete'>): PlotPage {
-  const history = new Patch('simulation-plot').axis('Time', 's'), edges = new Patch('simulation-plot');
-  if (flags.reset) history.replace('Trace', columns, { series: Float32Array.from(columns, (_, i) => i) });
-  const shift = basis === 'value' ? undefined : (column: string) => affine(basis, references?.get(column) ?? NaN);
-  for (const tile of tiles) addTile(tile.target === 'history' ? history : edges, tile, shift);
-  return { history: history.toBytes(), edges: edges.toBytes(), ...flags };
-}
-
 function pause(signal: AbortSignal) {
   return new Promise<void>((resolve, reject) => {
     const abort = () => { clearTimeout(timer); reject(signal.reason); };
@@ -94,8 +70,8 @@ function pause(signal: AbortSignal) {
   });
 }
 /** Each column's last value at or before `reference`, or its first without one. */
-async function referencesOf(reader: ResultReader, columns: readonly string[], reference: number | null, signal: AbortSignal): Promise<References> {
-  const { samples } = await reader.rows({ columns, at: reference ?? -Number.MAX_VALUE, count: 1, maxBytes: 8 * (1 + columns.length) }, signal);
+async function referencesOf(reader: ResultReader, columns: readonly string[], reference: number | null): Promise<References> {
+  const { samples } = await reader.rows({ columns, at: reference ?? -Number.MAX_VALUE, count: 1, maxBytes: 8 * (1 + columns.length) });
   return new Map(samples.columns.map((column, index) => [column, samples.values[index] ?? NaN]));
 }
 
@@ -162,34 +138,44 @@ export async function* networkPages(reader: ResultReader, { plan, every, maxByte
   }
 }
 
-/** The plot's tiles: each update says what extends the history this reader holds, then replaces the edges around it. */
-export async function* plotPages(reader: ResultReader, { columns, basis, reference, range, resolution, maxBytes }: PlotFeedRequest, signal: AbortSignal): AsyncGenerator<PlotPage> {
-  let cursor: Cursor | null = null, after: number | undefined, references: References | undefined;
-  while (true) {
-    const reply: SummaryReply = await reader.summary({ columns, range, resolution, maxBytes, cursor, ...after === undefined ? {} : { after } }, signal);
-    const { rows, state, range: covered, reset, tiles } = reply, revision = { rows, state, range: covered };
-    if (basis !== 'value' && tiles.length) references ??= await referencesOf(reader, columns, reference, signal);
-    const sealed = tiles.map(tile => tile.target).lastIndexOf('history');
-    // Even an update with no new history is sealed; an empty page carries it.
-    if (sealed < 0) yield packPlot(columns, [], basis, references, { ...revision, begin: true, reset, seal: true, complete: !tiles.length });
-    let index = 0;
-    for await (const tile of reply.pages()) {
-      const begin = sealed >= 0 && index === 0;
-      yield packPlot(columns, [tile], basis, references, { ...revision, begin, reset: begin && reset, seal: index === sealed, complete: index === tiles.length - 1 });
-      index++;
-    }
-    cursor = reply.cursor; after = rows;
-    if (isTerminal(state)) return;
-    await pause(signal);
+/** Entries a span of time tiles holds: a multiple of 8, near 1 MiB of Float32 least and greatest values. */
+const chunkOf = (columns: number) => Math.max(8, Math.floor((1 << 17) / columns / 8) * 8);
+
+/**
+ * File `path` of `set`'s time tiles, as latkit fetches it: the manifest, the base dataset, or a span of one level. `shift` gives
+ * each column's measure, taken in Float64 before the values become Float32.
+ */
+export async function tileFile(reader: ResultReader, { columns }: TileSet, path: string,
+  shift: () => Promise<((column: string) => Affine) | undefined>): Promise<Uint8Array> {
+  const chunk = chunkOf(columns.length);
+  if (path === 'frames.json') {
+    const { rows } = await reader.rows({ columns: columns.slice(0, 1), count: 1, maxBytes: 16 });
+    let levels = 0;
+    while (8 ** (levels + 1) <= rows) levels++;
+    return new TextEncoder().encode(JSON.stringify({ data: 'base.latk', chunk, url: '{level}/{index}.latk',
+      frames: [{ table: 'Trace', field: 'value', levels, frames: [0, rows] }] }));
   }
+  if (path === 'base.latk')
+    return new Patch(plotDataset).axis('Time', 's').replace('Trace', columns, { series: Float32Array.from(columns, (_, i) => i) }).toBytes();
+  const [level, index] = path.slice(0, -'.latk'.length).split('/').map(Number) as [number, number];
+  const first = index * chunk, planes = level ? 2 : 1;
+  const { block } = await reader.entries({ columns, level, first, count: chunk, maxBytes: 8 * planes * chunk * (1 + columns.length) });
+  const patch = new Patch(plotDataset);
+  addTile(patch, level, first, block, await shift());
+  return patch.toBytes();
 }
 
-/** What a run's results worker serves: one reader of the run, and each feed of it a page at a time, as each is asked. */
+/**
+ * What a run's results worker serves: one reader of the run, each feed of it a page at a time, as each is asked, and the plot's
+ * time tiles a file at a time.
+ */
 export class ResultHost {
   #reader: ResultReader | undefined;
-  #feeds = new Map<number, { pages: AsyncGenerator<NetworkPage | PlotPage>; abort: AbortController }>();
+  #feeds = new Map<number, { pages: AsyncGenerator<NetworkPage>; abort: AbortController }>();
+  /** Each tile set's measure, read once. */
+  #shifts = new Map<string, Promise<((column: string) => Affine) | undefined>>();
   constructor(private open: (port: MessagePort) => ResultReader) {}
-  async handle(command: ResultsCommand): Promise<NetworkPage | PlotPage | null> {
+  async handle(command: ResultsCommand): Promise<NetworkPage | Uint8Array | null> {
     switch (command.kind) {
       case 'open':
         this.close();
@@ -198,9 +184,14 @@ export class ResultHost {
       case 'follow': {
         this.#stop(command.feed);
         if (!this.#reader) throw new Error('No results to read.');
-        const abort = new AbortController(), { request } = command;
-        this.#feeds.set(command.feed, { abort, pages: request.kind === 'network' ? networkPages(this.#reader, request, abort.signal) : plotPages(this.#reader, request, abort.signal) });
+        const abort = new AbortController();
+        this.#feeds.set(command.feed, { abort, pages: networkPages(this.#reader, command.request, abort.signal) });
         return null;
+      }
+      case 'tile': {
+        const reader = this.#reader;
+        if (!reader) throw new Error('No results to read.');
+        return tileFile(reader, command.set, command.path, () => this.#shift(reader, command.set));
       }
       case 'next': {
         const feed = this.#feeds.get(command.feed);
@@ -220,16 +211,29 @@ export class ResultHost {
     feed.abort.abort();
     void feed.pages.return(undefined).catch(() => {});
   }
+  /** How `set` measures each column; one that could not be read is read again by the next span. */
+  #shift(reader: ResultReader, { columns, basis, reference }: TileSet) {
+    if (basis === 'value') return Promise.resolve(undefined);
+    const key = JSON.stringify([columns, basis, reference]);
+    let shift = this.#shifts.get(key);
+    if (!shift) {
+      shift = referencesOf(reader, columns, reference).then(references => (column: string) => affine(basis, references.get(column) ?? NaN));
+      shift.catch(() => this.#shifts.delete(key));
+      this.#shifts.set(key, shift);
+    }
+    return shift;
+  }
   /** Stops every feed, and lets the run's port go. */
   close() {
     for (const id of [...this.#feeds.keys()]) this.#stop(id);
+    this.#shifts.clear();
     this.#reader?.close();
     this.#reader = undefined;
   }
 }
-/** The buffers a page gives up, moved to the main thread rather than copied. */
-export const transferOf = (page: NetworkPage | PlotPage | null) =>
-  (!page ? [] : 'bytes' in page ? [page.bytes.buffer] : [page.history.buffer, page.edges.buffer]).filter((buffer): buffer is ArrayBuffer => buffer instanceof ArrayBuffer);
+/** The buffers a reply gives up, moved to the main thread rather than copied. */
+export const transferOf = (value: NetworkPage | Uint8Array | null) =>
+  (!value ? [] : value instanceof Uint8Array ? [value.buffer] : [value.bytes.buffer]).filter((buffer): buffer is ArrayBuffer => buffer instanceof ArrayBuffer);
 
 // Inside the worker: commands in order, each answered once; closing lets the run's port go before the worker ends.
 if ('WorkerGlobalScope' in globalThis) {

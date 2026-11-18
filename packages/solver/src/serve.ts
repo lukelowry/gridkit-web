@@ -1,5 +1,5 @@
-import { SolverError, type ArtifactName, type Engine, type RowsQuery, type RunId, type RunRequest, type SummaryQuery } from './index.js';
-import type { ArtifactHeader, Command, Event, Reply, RowsHeader, RunStatus, SummaryHeader } from './protocol.js';
+import { SolverError, type ArtifactName, type Engine, type EntriesQuery, type RowsQuery, type RunId, type RunRequest } from './index.js';
+import type { ArtifactHeader, Command, Event, Reply, RowsHeader, RunStatus } from './protocol.js';
 import { answer } from './reply.js';
 
 /** What an implementation does in its worker. serve() does the rest: the page, each reader, aborts, and moving every part. */
@@ -9,7 +9,7 @@ export interface Backend {
   start(run: RunId, request: RunRequest): Promise<void>;
   cancel(run: RunId): Promise<void>;
   rows(run: RunId, query: RowsQuery, signal: AbortSignal): Promise<Reply<RowsHeader>>;
-  summary(run: RunId, query: SummaryQuery, signal: AbortSignal): Promise<Reply<SummaryHeader>>;
+  entries(run: RunId, query: EntriesQuery, signal: AbortSignal): Promise<Reply<RowsHeader>>;
   artifact(run: RunId, name: ArtifactName, signal: AbortSignal): Promise<Reply<ArtifactHeader>>;
   close(): void;
 }
@@ -49,7 +49,7 @@ export function serve<Options>(open: Open<Options>, scope = self as unknown as E
         case 'start': await opened.start(data.run, { study: data.study, model: data.model }); break;
         case 'cancel': await opened.cancel(data.run); break;
         case 'results': answer(data.port, (question, signal) => question.op === 'rows' ? opened.rows(data.run, question.query, signal)
-          : question.op === 'summary' ? opened.summary(data.run, question.query, signal) : opened.artifact(data.run, question.name, signal)); break;
+          : question.op === 'entries' ? opened.entries(data.run, question.query, signal) : opened.artifact(data.run, question.name, signal)); break;
       }
       send({ kind: 'answer', id: data.id });
     } catch (cause) { send({ kind: 'answer', id: data.id, error: SolverError.of(cause) }); }

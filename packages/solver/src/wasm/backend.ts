@@ -41,7 +41,7 @@ export function wasmBackend({ engine, ...side }: Side, report: Report): Backend 
     },
     cancel: run => host.cancel(run),
     rows: (run, query) => host.rows(run, query),
-    summary: (run, query) => host.summary(run, query),
+    entries: (run, query) => host.entries(run, query),
     async artifact(run, name) {
       return name === 'results' ? { header: {}, parts: host.csv(run) } : { header: { href: link(run, name) }, parts: [] };
     },

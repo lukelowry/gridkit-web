@@ -1,7 +1,7 @@
-import { isTerminal, SolverError, type Failure, type RowsQuery, type RunState, type SummaryQuery } from '../index.js';
-import type { Reply, RowsHeader, RunStatus, SummaryHeader } from '../protocol.js';
+import { isTerminal, SolverError, type EntriesQuery, type Failure, type RowsQuery, type RunState } from '../index.js';
+import type { Reply, RowsHeader, RunStatus } from '../protocol.js';
 import type { GridKitEvent, GridKitStudy } from './gridkit.js';
-import { checkRows, checkSummary, readRows, summarize } from './reads.js';
+import { checkEntries, checkRows, readEntries, readRows } from './reads.js';
 import { expired, Store, timeRange, type Blocks } from './store.js';
 
 /** A run's files: one per level of its store, kept until the run is retired. */
@@ -183,13 +183,11 @@ export class Host {
     return { header: { rows: view.rows, state, range: timeRange(view), first, count }, parts: [values.buffer] };
   }
 
-  /** A summary's plan and its tiles' planes, as the solver service's summary answers them. */
-  async summary(address: string, query: SummaryQuery): Promise<Reply<SummaryHeader>> {
-    const run = this.#run(address), store = run.recording(), columns = checkSummary(store, query);
-    if (query.after !== undefined) await run.hold(query.after);
-    const state = run.current(), view = store.extent, plan = summarize(store, view, query, columns.length);
-    return { header: { rows: view.rows, state, range: timeRange(view), ...plan },
-      parts: plan.tiles.map(tile => store.planes(tile.level, tile.first, tile.rows, columns).buffer) };
+  /** Entries of one level, as the solver service's entries answer them: one part, read for this reply alone. */
+  async entries(address: string, query: EntriesQuery): Promise<Reply<RowsHeader>> {
+    const run = this.#run(address), store = run.recording(), columns = checkEntries(store, query);
+    const state = run.current(), view = store.extent, { first, count, values } = readEntries(store, view, columns, query);
+    return { header: { rows: view.rows, state, range: timeRange(view), first, count }, parts: [values.buffer] };
   }
 
   /** The recording as CSV, as the solver service's results download has it: each chunk made only when it is asked for. */

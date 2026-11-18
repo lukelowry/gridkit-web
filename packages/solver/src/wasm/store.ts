@@ -132,14 +132,23 @@ export class Store {
     });
   }
 
-  /** `rows` entries of one level from `first`: times then values at level 0, starts, ends, minima and maxima above it. */
+  /** How many levels hold a whole entry: an entries read asks for one of them. */
+  get levels() { return this.#files.length; }
+
+  /**
+   * `rows` entries of one level from `first`: times then values at level 0, starts, ends, minima and maxima above it. Above level
+   * 0 the last may be the one still filling.
+   */
   planes(level: number, first: number, rows: number, columns: readonly number[]): Float64Array<ArrayBuffer> {
     const width = this.#width, c = columns.length, stride = level ? 2 + 2 * width : width + 1;
     const out = new Float64Array((level ? 2 : 1) * rows * (1 + c));
+    const stored = level ? Math.max(0, Math.min(rows, Math.floor(this.extent.rows / 8 ** level) - first)) : rows;
+    if (rows - stored > 1) throw new SolverError('internal', 'The recording has no such entries.');
+    if (stored < rows) this.#filling(level, columns, out, rows);
     // Only the selected columns are kept, however wide the rows they are read from.
-    const batch = Math.max(1, Math.floor((1 << 20) / (stride * 8))), buffer = new Float64Array(Math.min(batch, rows) * stride);
-    for (let done = 0; done < rows;) {
-      const count = Math.min(batch, rows - done), read = buffer.subarray(0, count * stride);
+    const batch = Math.max(1, Math.floor((1 << 20) / (stride * 8))), buffer = new Float64Array(Math.min(batch, stored) * stride);
+    for (let done = 0; done < stored;) {
+      const count = Math.min(batch, stored - done), read = buffer.subarray(0, count * stride);
       this.#read(level, read, (first + done) * stride * 8);
       for (let i = 0; i < count; i++) {
         const row = i * stride, at = done + i;
@@ -157,6 +166,28 @@ export class Store {
       done += count;
     }
     return out;
+  }
+
+  /**
+   * Writes `level`'s last entry, still filling, as the last of `rows` in `out`: its own partial summary, folded with each one below
+   * it down to level 1, which every row folds into at once. Together they cover every row since the level's last whole entry.
+   */
+  #filling(level: number, columns: readonly number[], out: Float64Array, rows: number) {
+    const width = this.#width, c = columns.length, at = rows - 1, mins = 2 * rows + at * c, maxs = 2 * rows + rows * c + at * c;
+    let found = false;
+    for (let k = 1; k <= level; k++) {
+      const partial = this.#partials[k];
+      if (!partial?.length) continue;
+      // Each level up covers earlier rows: the highest starts the entry, the lowest ends it.
+      out[at] = partial[0]!;
+      if (!found) out[rows + at] = partial[1]!;
+      columns.forEach((column, j) => {
+        const low = partial[2 + column]!, high = partial[2 + width + column]!;
+        if (!found || low < out[mins + j]! || low !== low) out[mins + j] = low;
+        if (!found || high > out[maxs + j]! || high !== high) out[maxs + j] = high;
+      });
+      found = true;
+    }
   }
 
   /** `count` rows from `first`, every `every`th: times, then values. */

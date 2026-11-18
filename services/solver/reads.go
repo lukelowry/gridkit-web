@@ -32,7 +32,7 @@ type RowsQuery struct {
 	MaxBytes int  `json:"maxBytes"`
 }
 
-// RowsHeader describes `count` rows from row `first`, then their times and time-major values.
+// RowsHeader describes `count` rows or entries from `first`, then their planes.
 type RowsHeader struct {
 	Rows  int         `json:"rows"`
 	State string      `json:"state"`
@@ -98,118 +98,22 @@ func (s *Service) rows(w http.ResponseWriter, r *http.Request) error {
 	return err
 }
 
-// SummaryQuery asks for a time range at a pixel width. A reader that has some of it says what it holds.
-type SummaryQuery struct {
-	Columns []string `json:"columns"`
-	// The times to cover, or all of them.
-	Range *[2]float64 `json:"range"`
-	// Pixels across the range: no coarse bucket spans more than one.
-	Resolution int `json:"resolution"`
-	// The largest numeric payload of any tile.
-	MaxBytes int     `json:"maxBytes"`
-	Cursor   *Cursor `json:"cursor"`
-	// Hold until the recording has more than this many rows, or the run ends.
-	After *int `json:"after"`
+// EntriesQuery asks for `count` entries of one level from entry `first`: rows at level 0, and above it buckets of 8^level rows,
+// each the least and greatest of its rows. A level's last bucket holds the rows so far while it fills.
+type EntriesQuery struct {
+	Columns  []string `json:"columns"`
+	Level    int      `json:"level"`
+	First    int      `json:"first"`
+	Count    int      `json:"count"`
+	MaxBytes int      `json:"maxBytes"`
 }
 
-// Cursor is the history a reader holds: `sealed` rows, from `first`, at one level of detail.
-type Cursor struct {
-	Level  int `json:"level"`
-	First  int `json:"first"`
-	Sealed int `json:"sealed"`
-}
-
-// Tile describes a run of native entries. Above level 0 an entry spans 8^level rows.
-type Tile struct {
-	Target string `json:"target"`
-	Kind   string `json:"kind"`
-	Level  int    `json:"level"`
-	First  int    `json:"first"`
-	Rows   int    `json:"rows"`
-}
-
-// SummaryHeader describes what extends a reader's history and the edges it replaces, then their planes in turn.
-type SummaryHeader struct {
-	Rows   int         `json:"rows"`
-	State  string      `json:"state"`
-	Range  *[2]float64 `json:"range"`
-	Reset  bool        `json:"reset"`
-	Cursor Cursor      `json:"cursor"`
-	Tiles  []Tile      `json:"tiles"`
-}
-
-func (q *SummaryQuery) validate(columns int) error {
-	switch {
-	case columns == 0:
-		return invalid("Choose columns to summarize.")
-	case q.Resolution <= 0 || q.Resolution > maxStreamRows || q.MaxBytes < 4096 || q.MaxBytes > maxStreamBytes:
-		return invalid("The summary's budget is outside the supported range.")
-	case q.Range != nil && q.Range[0] > q.Range[1]:
-		return invalid("Invalid time range.")
-	case 16*(columns+1) > q.MaxBytes:
-		return invalid("The selection is too wide for the summary's budget.")
-	}
-	return nil
-}
-
-// tiles partitions rows into aligned entries, finer at the edges, so no partial bucket is ever labelled as whole.
-func tiles(target string, first, last, level, columns, maxBytes int) []Tile {
-	var out []Tile
-	for position := first; position < last; {
-		power, span, kind, planes := 0, 1, "samples", 1
-		for power < level && position%(span*8) == 0 && position+span*8 <= last {
-			power, span, kind, planes = power+1, span*8, "envelope", 2
-		}
-		capacity := maxBytes / (8 * (columns + 1) * planes)
-		end := position + span
-		for end+span <= last && (end-position)/span < capacity && (power == level || end%(span*8) != 0) {
-			end += span
-		}
-		out = append(out, Tile{target, kind, power, position / span, (end - position) / span})
-		position = end
-	}
-	return out
-}
-
-// summarize plans one revision: the history a reader lacks, then the edges around it, which no history holds yet.
-func summarize(store *Store, view *Extent, query *SummaryQuery, columns int) (SummaryHeader, error) {
-	first, last, err := store.interval(view, query.Range)
-	if err != nil {
-		return SummaryHeader{}, err
-	}
-	period := [2]float64{view.start, view.end}
-	if query.Range != nil {
-		period = *query.Range
-	}
-	pixel := (period[1] - period[0]) / float64(query.Resolution)
-	level, span := 0, 1
-	for view.step > 0 && float64(span*8)*view.step <= pixel {
-		level, span = level+1, span*8
-	}
-	start, end := (first+span-1)/span*span, last/span*span
-	from, reset := start, query.Cursor == nil || query.Cursor.Level != level || query.Cursor.First != first
-	if !reset {
-		from = max(start, query.Cursor.Sealed)
-	}
-	header := SummaryHeader{Rows: view.rows, Range: view.timeRange(), Reset: reset, Cursor: Cursor{level, first, max(start, end)}, Tiles: []Tile{}}
-	if end > from {
-		header.Tiles = tiles("history", from, end, level, columns, query.MaxBytes)
-	}
-	if end < start {
-		header.Tiles = append(header.Tiles, tiles("edge", first, last, level, columns, query.MaxBytes)...)
-	} else {
-		header.Tiles = append(header.Tiles, tiles("edge", first, min(start, last), level, columns, query.MaxBytes)...)
-		header.Tiles = append(header.Tiles, tiles("edge", max(end, first), last, level, columns, query.MaxBytes)...)
-	}
-	return header, nil
-}
-
-func (s *Service) summary(w http.ResponseWriter, r *http.Request) error {
+func (s *Service) entries(w http.ResponseWriter, r *http.Request) error {
 	run, store, err := s.recording(r)
 	if err != nil {
 		return err
 	}
-	var query SummaryQuery
+	var query EntriesQuery
 	if err := readQuery(w, r, &query); err != nil {
 		return err
 	}
@@ -217,38 +121,26 @@ func (s *Service) summary(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if err := query.validate(len(columns)); err != nil {
-		return err
-	}
-	if query.After != nil {
-		ctx, cancel := context.WithTimeout(r.Context(), hold)
-		defer cancel()
-		run.waitForRows(ctx, *query.After)
+	view, planes := store.extent.Load(), 1+min(query.Level, 1)
+	if len(columns) == 0 || query.Level < 0 || query.Level >= len(view.files) || query.First < 0 || query.Count <= 0 ||
+		query.MaxBytes > maxReadBytes || 8*planes*query.Count*(1+len(columns)) > query.MaxBytes {
+		return invalid("Invalid read.")
 	}
 	state, err := run.current()
 	if err != nil {
 		return err
 	}
-	view := store.extent.Load()
-	header, err := summarize(store, view, &query, len(columns))
-	if err != nil {
-		return err
+	header := RowsHeader{Rows: view.rows, State: state, Range: view.timeRange(), First: query.First}
+	header.Count = max(0, min(query.Count, view.entries(query.Level)-query.First))
+	var values []float64
+	if header.Count > 0 {
+		if values, err = store.planes(view, query.Level, query.First, header.Count, columns); err != nil {
+			return err
+		}
 	}
-	header.State = state
 	if err := writeHeader(w, header); err != nil {
 		return err
 	}
-	flusher := http.NewResponseController(w)
-	for _, tile := range header.Tiles {
-		values, err := store.planes(view, tile.Level, tile.First, tile.Rows, columns)
-		if err != nil {
-			// The header is gone: only a broken body can say the transaction failed.
-			panic(http.ErrAbortHandler)
-		}
-		if _, err := w.Write(raw(values)); err != nil {
-			return nil
-		}
-		flusher.Flush()
-	}
-	return nil
+	_, err = w.Write(raw(values))
+	return err
 }

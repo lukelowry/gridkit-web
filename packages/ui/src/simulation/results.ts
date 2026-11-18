@@ -1,11 +1,14 @@
-import type { FeedRequest, NetworkFeed, NetworkPage, PlotFeedRequest, PlotPage } from './results.worker.js';
+import { Tiles } from 'latkit';
+import type { NetworkFeed, NetworkPage, TileSet } from './results.worker.js';
+import { plotDataset } from './plot.js';
 
-/** What the page asks of a run's results worker, each answered once by its id: its run's port, then each feed of it by number. */
+/** What the page asks of a run's results worker, each answered once by its id: its run's port, each feed of it by number, and tiles. */
 export type ResultsCommand =
   | { kind: 'open'; port: MessagePort }
-  | { kind: 'follow'; feed: number; request: FeedRequest }
+  | { kind: 'follow'; feed: number; request: NetworkFeed }
   | { kind: 'next'; feed: number }
-  | { kind: 'stop'; feed: number };
+  | { kind: 'stop'; feed: number }
+  | { kind: 'tile'; set: TileSet; path: string };
 /** Each command, and the last word: the worker lets the run's port go, and ends. */
 export type ResultsMessage = (ResultsCommand & { id: number }) | { kind: 'close' };
 export interface ResultsReply {
@@ -39,6 +42,8 @@ export class RunResults {
   #pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
   #closed: Error | undefined;
   #opened: Promise<unknown>;
+  /** Each tile set asked for, by its measure: shown again, it draws what it fetched. */
+  #tiles = new Map<string, Tiles>();
 
   /** Reads the run whose port `port` gives, once it does. */
   constructor(port: Promise<MessagePort>) {
@@ -76,21 +81,35 @@ export class RunResults {
     });
   }
   /** Reads `request` beside any other feed, and applies each page before asking for the next, until it ends or `signal` aborts. */
-  follow(request: NetworkFeed, signal: AbortSignal, apply: (page: NetworkPage) => void | Promise<void>): Promise<void>;
-  follow(request: PlotFeedRequest, signal: AbortSignal, apply: (page: PlotPage) => void | Promise<void>): Promise<void>;
-  async follow(request: FeedRequest, signal: AbortSignal, apply: (page: never) => void | Promise<void>) {
+  async follow(request: NetworkFeed, signal: AbortSignal, apply: (page: NetworkPage) => void | Promise<void>) {
     await this.#opened;
     signal.throwIfAborted();
     const feed = this.#feeds++;
     try {
       await this.#request({ kind: 'follow', feed, request }, signal);
       while (true) {
-        const page = await this.#request<NetworkPage | PlotPage | null>({ kind: 'next', feed }, signal);
+        const page = await this.#request<NetworkPage | null>({ kind: 'next', feed }, signal);
         if (!page) return;
-        await apply(page as never);
+        await apply(page);
         signal.throwIfAborted();
       }
     } finally { void this.#request({ kind: 'stop', feed }).catch(() => {}); }
+  }
+  /**
+   * `set`'s time tiles, which latkit fetches through this worker as the plot window needs them. One per set: a set asked for again
+   * catches up with what the run recorded since.
+   */
+  tiles(set: TileSet): Tiles {
+    const key = JSON.stringify(set);
+    let tiles = this.#tiles.get(key);
+    if (tiles) { tiles.refresh(); return tiles; }
+    const fetch = async (url: string) => {
+      await this.#opened;
+      return this.#request<Uint8Array>({ kind: 'tile', set, path: url.slice(url.indexOf('/') + 1) });
+    };
+    tiles = new Tiles(plotDataset, `plot:${this.#tiles.size}/frames.json`, { fetch });
+    this.#tiles.set(key, tiles);
+    return tiles;
   }
   /** Ends every feed; the worker lets the run's port go, then ends itself. */
   close(error: Error = new DOMException('The result worker closed.', 'AbortError')) {
@@ -99,5 +118,6 @@ export class RunResults {
     this.#worker.postMessage({ kind: 'close' } satisfies ResultsMessage);
     for (const pending of this.#pending.values()) pending.reject(error);
     this.#pending.clear();
+    this.#tiles.clear();
   }
 }

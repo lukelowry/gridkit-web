@@ -1,4 +1,4 @@
-import type { ArtifactName, Cursor, Engine, Failure, Revision, RowsQuery, RunId, RunState, SummaryQuery, TileDescription, TimeRange } from './index.js';
+import type { ArtifactName, Engine, EntriesQuery, Failure, Revision, RowsQuery, RunId, RunState, TimeRange } from './index.js';
 
 // The one protocol every implementation speaks: the page commands its solver's worker, which says what each run does; a reader
 // asks through a port of its own, and hears a header, then the numbers or bytes it asked for, moved rather than copied.
@@ -30,7 +30,7 @@ export type Event =
 /** A reader to its run, through its port: a question, the next part of an answer, or no more of one. */
 export type Ask =
   | { readonly id: number; readonly op: 'rows'; readonly query: RowsQuery }
-  | { readonly id: number; readonly op: 'summary'; readonly query: SummaryQuery }
+  | { readonly id: number; readonly op: 'entries'; readonly query: EntriesQuery }
   | { readonly id: number; readonly op: 'artifact'; readonly name: ArtifactName }
   | { readonly id: number; readonly op: 'next' }
   | { readonly id: number; readonly op: 'abort' }
@@ -48,13 +48,7 @@ export type Answer =
 /** An answer as an implementation gives it: its header, and its parts, at hand or made as they are asked for. */
 export interface Reply<H> { readonly header: H; readonly parts: readonly ArrayBuffer[] | AsyncIterable<ArrayBuffer> }
 
-/** `count` rows from `first`: one part, their times then their time-major values. */
+/** `count` rows or entries from `first`: one part, their planes as planes.ts reads them. */
 export interface RowsHeader extends Revision { readonly first: number; readonly count: number }
-/** A summary's plan: one part per tile, in turn. */
-export interface SummaryHeader extends Revision {
-  readonly reset: boolean;
-  readonly cursor: Cursor;
-  readonly tiles: readonly TileDescription[];
-}
 /** A file: a link the browser downloads itself, or its bytes as parts. */
 export interface ArtifactHeader { readonly href?: string }

@@ -19,9 +19,8 @@ import (
 )
 
 const (
-	maxReadBytes   = 8 << 20
-	maxStreamBytes = 64 << 20
-	maxStreamRows  = 65536
+	// A read fits a span of 8 coarse entries of 100k columns.
+	maxReadBytes   = 16 << 20
 	maxSolverBytes = 1 << 20
 	maxQueryBytes  = 16 << 20
 )
@@ -118,7 +117,7 @@ func (s *Service) routes() http.Handler {
 	route("POST /runs", s.begin)
 	route("GET /runs/{id}", s.status)
 	route("POST /runs/{id}/rows", s.rows)
-	route("POST /runs/{id}/summary", s.summary)
+	route("POST /runs/{id}/entries", s.entries)
 	route("POST /runs/{id}/cancel", s.cancel)
 	route("GET /runs/{id}/results", s.results)
 	route("GET /runs/{id}/log", s.file("run.log", "text/plain"))

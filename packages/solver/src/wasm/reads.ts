@@ -1,8 +1,8 @@
-import { SolverError, type Cursor, type RowsQuery, type SummaryQuery, type TileDescription } from '../index.js';
+import { SolverError, type EntriesQuery, type RowsQuery } from '../index.js';
 import type { Extent, Store } from './store.js';
 
-/** The solver service's limits on a read, which the solver in this page keeps too. */
-const maxReadBytes = 8 << 20, maxStreamBytes = 64 << 20, maxStreamRows = 65536;
+/** The solver service's limit on a read, which the solver in this page keeps too: a span of 8 coarse entries of 100k columns. */
+const maxReadBytes = 16 << 20;
 const invalid = (message: string) => new SolverError('invalid', message);
 
 /** A rows query as the solver service checks it, before any wait for more rows. */
@@ -23,44 +23,16 @@ export function readRows(store: Store, view: Extent, { columns, from, every, cap
   return { first, count, values: count ? store.sampled(first, count, every, columns) : new Float64Array() };
 }
 
-/** A summary query's columns, as the solver service checks it, before any wait for more rows. */
-export function checkSummary(store: Store, query: SummaryQuery) {
-  const columns = store.selection(query.columns), { resolution, maxBytes, range } = query;
-  if (!columns.length) throw invalid('Choose columns to summarize.');
-  if (resolution <= 0 || resolution > maxStreamRows || maxBytes < 4096 || maxBytes > maxStreamBytes) throw invalid('The summary\'s budget is outside the supported range.');
-  if (range && range[0] > range[1]) throw invalid('Invalid time range.');
-  if (16 * (columns.length + 1) > maxBytes) throw invalid('The selection is too wide for the summary\'s budget.');
+/** An entries query's columns, as the solver service checks it. */
+export function checkEntries(store: Store, { columns: names, level, first, count, maxBytes }: EntriesQuery) {
+  const columns = store.selection(names), planes = level ? 2 : 1;
+  if (!columns.length || !Number.isInteger(level) || level < 0 || level >= store.levels || first < 0 || count <= 0 ||
+    maxBytes > maxReadBytes || 8 * planes * count * (1 + columns.length) > maxBytes) throw invalid('Invalid read.');
   return columns;
 }
 
-/** Partitions rows into aligned entries, finer at the edges, so no partial bucket is ever labelled as whole. */
-export function tiles(target: TileDescription['target'], first: number, last: number, level: number, columns: number, maxBytes: number): TileDescription[] {
-  const out: TileDescription[] = [];
-  for (let position = first; position < last;) {
-    let power = 0, span = 1, kind: TileDescription['kind'] = 'samples', planes = 1;
-    while (power < level && position % (span * 8) === 0 && position + span * 8 <= last) {
-      power++; span *= 8; kind = 'envelope'; planes = 2;
-    }
-    const capacity = Math.floor(maxBytes / (8 * (columns + 1) * planes));
-    let end = position + span;
-    while (end + span <= last && (end - position) / span < capacity && (power === level || end % (span * 8) !== 0)) end += span;
-    out.push({ target, kind, level: power, first: position / span, rows: (end - position) / span });
-    position = end;
-  }
-  return out;
-}
-
-/** Plans one revision: the history a reader lacks, then the edges around it, which no history holds yet. */
-export function summarize(store: Store, view: Extent, query: SummaryQuery, columns: number): { reset: boolean; cursor: Cursor; tiles: TileDescription[] } {
-  const [first, last] = store.interval(view, query.range), period = query.range ?? [view.start, view.end];
-  const pixel = (period[1] - period[0]) / query.resolution;
-  let level = 0, span = 1;
-  while (view.step > 0 && span * 8 * view.step <= pixel) { level++; span *= 8; }
-  const start = Math.ceil(first / span) * span, end = Math.floor(last / span) * span, held = query.cursor;
-  const reset = !held || held.level !== level || held.first !== first, from = reset ? start : Math.max(start, held.sealed);
-  const planned = end > from ? tiles('history', from, end, level, columns, query.maxBytes) : [];
-  if (end < start) planned.push(...tiles('edge', first, last, level, columns, query.maxBytes));
-  else planned.push(...tiles('edge', first, Math.min(start, last), level, columns, query.maxBytes),
-    ...tiles('edge', Math.max(end, first), last, level, columns, query.maxBytes));
-  return { reset, cursor: { level, first, sealed: Math.max(start, end) }, tiles: planned };
+/** Entries of one level: the whole ones, and the one still filling. */
+export function readEntries(store: Store, view: Extent, columns: readonly number[], { level, first, count }: EntriesQuery) {
+  const held = Math.max(0, Math.min(count, Math.ceil(view.rows / 8 ** level) - first));
+  return { first, count: held, values: held ? store.planes(level, first, held, columns) : new Float64Array() };
 }

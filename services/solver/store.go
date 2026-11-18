@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,6 +23,8 @@ type Extent struct {
 	start, end float64
 	step       float64
 	files      []*os.File
+	// Each level's summary still gathering entries, never changed once published.
+	partials [][]float64
 }
 
 // timeRange is what the revision covers, once it holds a row.
@@ -30,6 +33,12 @@ func (e *Extent) timeRange() *[2]float64 {
 		return nil
 	}
 	return &[2]float64{e.start, e.end}
+}
+
+// entries is how many entries `level` holds: its whole ones, and the one still filling.
+func (e *Extent) entries(level int) int {
+	span := 1 << (3 * level)
+	return (e.rows + span - 1) / span
 }
 
 // Store appends FP64 rows of [t, columns...] and folds every eight entries of a level into one min/max entry of the next.
@@ -106,7 +115,7 @@ func (s *Store) Append(rows []float64) error {
 	if err := s.fold(1, rows, stride, 0, 1, 1); err != nil {
 		return err
 	}
-	next.files = s.files
+	next.files, next.partials = s.files, slices.Clone(s.partials)
 	s.extent.Store(&next)
 	return nil
 }
@@ -145,7 +154,8 @@ func (s *Store) fold(level int, from []float64, stride, end, low, high int) erro
 		slot[1] = entry[end]
 	}
 	whole := total / 8
-	s.held[level], s.partials[level] = total%8, append(s.partials[level][:0], out[whole*size:]...)
+	// A new slice each time: published extents keep the one they saw.
+	s.held[level], s.partials[level] = total%8, slices.Clone(out[whole*size:])
 	if whole == 0 {
 		return nil
 	}
@@ -184,23 +194,30 @@ func (s *Store) selection(names []string) ([]int, error) {
 }
 
 // planes reads `rows` entries of one level from `first`: times then values at level 0, starts, ends, minima and maxima above it.
+// Above level 0 the last may be the one still filling.
 func (s *Store) planes(view *Extent, level, first, rows int, columns []int) ([]float64, error) {
 	s.open.RLock()
 	defer s.open.RUnlock()
 	if s.shut {
 		return nil, errExpired
 	}
-	stride, times := s.width+1, 1
+	stride, times, stored := s.width+1, 1, rows
 	if level > 0 {
-		stride, times = 2+2*s.width, 2
+		stride, times, stored = 2+2*s.width, 2, max(0, min(rows, view.rows>>(3*level)-first))
+	}
+	if rows-stored > 1 {
+		return nil, errors.New("the recording has no such entries")
 	}
 	c := len(columns)
 	out := make([]float64, times*rows*(1+c))
+	if stored < rows {
+		view.filling(level, columns, out, rows)
+	}
 	// Only the selected columns are kept, however wide the rows they are read from.
 	batch := max(1, (1<<20)/(stride*8))
-	buffer := make([]float64, min(batch, rows)*stride)
-	for done := 0; done < rows; {
-		count := min(batch, rows-done)
+	buffer := make([]float64, min(batch, stored)*stride)
+	for done := 0; done < stored; {
+		count := min(batch, stored-done)
 		if _, err := view.files[level].ReadAt(raw(buffer[:count*stride]), int64(first+done)*int64(stride)*8); err != nil {
 			return nil, err
 		}
@@ -222,6 +239,36 @@ func (s *Store) planes(view *Extent, level, first, rows int, columns []int) ([]f
 		done += count
 	}
 	return out, nil
+}
+
+// filling writes `level`'s last entry, still filling, as the last of `rows` in `out`: its own partial summary, folded with each one
+// below it down to level 1, which every row folds into at once. Together they cover every row since the level's last whole entry.
+func (e *Extent) filling(level int, columns []int, out []float64, rows int) {
+	c, at := len(columns), rows-1
+	mins, maxs := out[2*rows+at*c:][:c], out[2*rows+rows*c+at*c:][:c]
+	found := false
+	for k := 1; k <= level && k < len(e.partials); k++ {
+		partial := e.partials[k]
+		if len(partial) == 0 {
+			continue
+		}
+		width := (len(partial) - 2) / 2
+		// Each level up covers earlier rows: the highest starts the entry, the lowest ends it.
+		out[at] = partial[0]
+		if !found {
+			out[rows+at] = partial[1]
+		}
+		for j, column := range columns {
+			low, high := partial[2+column], partial[2+width+column]
+			if !found || low < mins[j] || low != low {
+				mins[j] = low
+			}
+			if !found || high > maxs[j] || high != high {
+				maxs[j] = high
+			}
+		}
+		found = true
+	}
 }
 
 // sampled reads `count` rows from `first`, every `every`th: times, then values.

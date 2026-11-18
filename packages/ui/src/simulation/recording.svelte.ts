@@ -97,7 +97,7 @@ export class Recording {
       const every = recordingStride(plan, this.options.rows, heldBytes), buffer = new RecordingBuffer(this.data);
       let referenceVersion = this.#referenceVersion;
       try {
-        await results.follow({ kind: 'network', plan, every, maxBytes: packetBytes }, signal, async page => {
+        await results.follow({ plan, every, maxBytes: packetBytes }, signal, async page => {
           await pace.ready(signal);
           if (page.begin) referenceVersion = this.#referenceVersion;
           pace.spend(() => {

@@ -1,9 +1,10 @@
-import { Data, type Snapshot } from 'latkit';
+import type { Tiles } from 'latkit';
 import type { Quantity } from './channels.js';
 import type { Basis } from '../domain/measure.js';
-import type { PlotPage } from './results.worker.js';
 import type { TimeRange } from '@gridkit/solver';
-import { Pace } from '../ui/pace.js';
+
+/** The dataset the plot's traces draw: table `Trace`, a row per series. */
+export const plotDataset = 'simulation-plot';
 
 export interface PlotViewport {
   readonly x: TimeRange;
@@ -25,58 +26,14 @@ export interface PlotCamera extends PlotViewport {
   readonly version: number;
 }
 
-/** The plot's data, owned by the caller, independent of execution and transport. */
+/** What the plot draws, independent of execution and transport. */
 export interface PlotData {
-  /** The Data identity stays stable as the run grows; it owns the view's lifetime. */
-  readonly data: Data;
+  /** The quantity's time tiles: latkit fetches the detail the plot window shows. */
+  readonly source: Tiles;
   readonly quantity: Quantity;
   /** What the traces show of it. */
   readonly basis: Basis;
   /** The time they deviate from, or the first sample without one. */
   readonly reference: number | null;
   readonly camera: PlotCamera;
-}
-
-/** Builds one update off-screen, sharing immutable history pages, while the published Data keeps its identity. History and
- * edge runs belong to the same sampled field, so latkit connects adjacent absolute sample indices across every seam. */
-export class PlotBuffer {
-  #building = new Data('simulation-plot');
-  #sealed: Snapshot | undefined;
-  #next: Snapshot | undefined;
-  #open = false;
-  #sealing = false;
-  #pace = new Pace();
-  constructor(private data: Data) {}
-
-  apply(page: PlotPage): boolean {
-    this.#pace.spend(() => this.#apply(page));
-    return page.complete;
-  }
-  #apply(page: PlotPage) {
-    if (page.begin) {
-      if (this.#open) throw new Error('Unfinished trace update.');
-      if (!page.reset && !this.#sealed) throw new Error('Missing sealed trace history.');
-      if (!page.reset) this.#building.restore(this.#sealed!);
-      this.#open = true; this.#sealing = false;
-    } else if (!this.#open || page.reset) throw new Error('Unexpected trace page.');
-    this.#building.apply(page.history);
-    if (page.seal) {
-      if (this.#sealing) throw new Error('Trace history was sealed twice.');
-      this.#next = this.#building.snapshot();
-      this.#sealing = true;
-    }
-    this.#building.apply(page.edges);
-    if (page.complete) {
-      if (!this.#next || !this.#sealing) throw new Error('Incomplete trace history.');
-      const snapshot = this.#building.snapshot();
-      try { this.data.restore(snapshot); } finally { snapshot.destroy(); }
-      this.#sealed?.destroy(); this.#sealed = this.#next; this.#next = undefined;
-      this.#open = false;
-    }
-  }
-  ready(signal: AbortSignal) { return this.#pace.ready(signal); }
-
-  destroy() {
-    this.#next?.destroy(); this.#sealed?.destroy(); this.#building.destroy();
-  }
 }
