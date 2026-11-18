@@ -32,7 +32,7 @@ const feed: NetworkFeed = { plan: networkPlan([]), every: 1, maxBytes: 4096 };
 function facade() {
   vi.stubGlobal('Worker', WorkerStub);
   const { port1 } = new MessageChannel();
-  return { results: new RunResults(Promise.resolve(port1)), stub: WorkerStub.instance, port: port1 };
+  return { results: new RunResults(Promise.resolve(port1), 1), stub: WorkerStub.instance, port: port1 };
 }
 const kinds = (stub: WorkerStub) => stub.messages.map(message => message.kind);
 /** A worker script that could not load, as the browser reports one: an error with no message. */
@@ -56,7 +56,7 @@ it('opens the run\'s port once, pulls a page only once the last is applied, and 
   const applied = vi.fn(() => new Promise<void>(resolve => { release = resolve; }));
   const following = results.follow(feed, abort.signal, applied);
   await flush();
-  expect(stub.messages[0]).toMatchObject({ kind: 'open', port });
+  expect(stub.messages[0]).toMatchObject({ kind: 'open', port, width: 1 });
   stub.reply('open'); await flush();
   expect(stub.messages[1]).toMatchObject({ kind: 'follow', feed: 0, request: feed });
   stub.reply('follow'); await flush();
@@ -194,7 +194,7 @@ it('serves a run\'s feeds side by side, stops each alone, and lets the run\'s po
   const signals: AbortSignal[] = [], close = vi.fn();
   const reader = readerOf({ close, rows: async (_query, signal) => { signals.push(signal!); return new Promise((_, reject) => signal!.addEventListener('abort', () => reject(signal!.reason))); } });
   const host = new ResultHost(() => reader), network = { ...feed, plan: networkPlan(bus) }, { port1 } = new MessageChannel();
-  await host.handle({ kind: 'open', port: port1 });
+  await host.handle({ kind: 'open', port: port1, width: 1 });
   await host.handle({ kind: 'follow', feed: 0, request: network });
   await host.handle({ kind: 'follow', feed: 1, request: network });
   const first = host.handle({ kind: 'next', feed: 0 }), rejected = expect(first).rejects.toMatchObject({ name: 'AbortError' });
@@ -212,10 +212,10 @@ it('serves a run\'s feeds side by side, stops each alone, and lets the run\'s po
 const set: TileSet = { columns: ['v'], basis: 'value', reference: null };
 const envelope = (columns: string[], starts: number[], ends: number[], minimum: number[], maximum: number[]): Envelope => ({ kind: 'envelope', columns,
   starts: Float64Array.from(starts), ends: Float64Array.from(ends), minimum: Float64Array.from(minimum), maximum: Float64Array.from(maximum) });
-/** A results worker's host of `reader`, its run's port open. */
-async function hosting(reader: ResultReader) {
+/** A results worker's host of `reader`, its run's port open: a run of `width` columns. */
+async function hosting(reader: ResultReader, width = 2) {
   const host = new ResultHost(() => reader), { port1 } = new MessageChannel();
-  await host.handle({ kind: 'open', port: port1 });
+  await host.handle({ kind: 'open', port: port1, width });
   return host;
 }
 const file = async (host: ResultHost, shown: TileSet, path: string) => await host.handle({ kind: 'tile', set: shown, path }) as Uint8Array;
@@ -234,13 +234,15 @@ async function extent(host: ResultHost, shown: TileSet) {
   } finally { data.destroy(); }
 }
 
-it('describes a set\'s time tiles: each level the run holds a whole entry of, in spans near 1 MiB', async () => {
-  const host = await hosting(readerOf({ rows: async query => ({ rows: 600, state: 'running', range: [0, 5.99], samples: samples(0, [0], [1], [...query.columns]) }) }));
-  const manifest = async (columns: number) =>
-    JSON.parse(new TextDecoder().decode(await file(host, { ...set, columns: Array.from({ length: columns }, (_, i) => `c${i}`) }, 'frames.json')));
+it('describes a set\'s time tiles: each level the run holds a whole entry of, in spans near 1 MiB of its rows', async () => {
+  const reader = readerOf({ rows: async query => ({ rows: 600, state: 'running', range: [0, 5.99], samples: samples(0, [0], [1], [...query.columns]) }) });
+  const manifest = async (width: number) => {
+    const host = await hosting(reader, width);
+    try { return JSON.parse(new TextDecoder().decode(await file(host, set, 'frames.json'))); } finally { host.close(); }
+  };
   expect(await manifest(1)).toEqual({ data: 'base.latk', chunk: 131072, url: '{level}/{index}.latk', frames: [{ table: 'Trace', field: 'value', levels: 3, frames: [0, 600] }] });
+  // A plot of one series reads few rows of a wide run a span: the solver reads them whole.
   expect((await Promise.all([2000, 70000].map(manifest))).map(({ chunk }) => chunk)).toEqual([64, 8]);
-  host.close();
 });
 
 it.each([1, 2])('writes spans latkit draws as the solver keeps level %i: extrema and gaps per series', async level => {

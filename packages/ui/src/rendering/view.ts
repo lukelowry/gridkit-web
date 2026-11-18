@@ -11,7 +11,6 @@ export class CaseView {
   #view: View | undefined;
   #extra: readonly Source[] = [];
   #input: NetworkScene | undefined;
-  #json = '';
   #document: CaseDocument | undefined;
 
   get view(): View { return this.#view!; }
@@ -47,7 +46,7 @@ export class CaseView {
   async open(canvas: HTMLCanvasElement | null, input: NetworkScene, { camera, extra = [], signal }: { camera?: Partial<Camera>; extra?: readonly Source[]; signal?: AbortSignal } = {}) {
     await this.#prepare(signal ?? new AbortController().signal);
     this.#view = await View.create(canvas, input.scene, { sources: [this.data, ...extra], ...camera && { camera }, ...signal && { signal } });
-    this.#extra = extra; this.#input = input; this.#json = JSON.stringify(input.scene);
+    this.#extra = extra; this.#input = input;
   }
 
   /** Draws `extra` datasets besides the case's, such as borders and samples, from the frame after they change. */
@@ -57,13 +56,11 @@ export class CaseView {
     this.view.sources = [this.data, ...extra];
   }
 
-  /** Shows `input` unless it is the scene already shown; answers whether it changed. */
-  show(input: NetworkScene): boolean {
-    if (input === this.#input) return false;
-    const json = JSON.stringify(input.scene), changed = json !== this.#json;
-    if (changed) this.view.scene = input.scene;
-    this.#input = input; this.#json = json;
-    return changed;
+  /** Shows `input`: latkit changes nothing for a scene it already has. */
+  show(input: NetworkScene) {
+    if (input === this.#input) return;
+    this.view.scene = input.scene;
+    this.#input = input;
   }
 
   destroy() {

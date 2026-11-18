@@ -45,9 +45,9 @@ export function conformance(name: string, subject: Subject, timeout = 120_000) {
         expect(samples.times.length).toBeGreaterThan(0);
         expect(samples.values).toHaveLength(samples.times.length * columns.length);
         for (let i = 1; i < samples.times.length; i++) expect(samples.times[i]).toBeGreaterThanOrEqual(samples.times[i - 1]!);
-        // A coarse level covers the run whole: its whole buckets, and the last while it fills.
-        const buckets = Math.ceil(rows / 8), { block } = await reader.entries({ columns, level: 1, first: 0, count: buckets, maxBytes: 8 << 20 }, signal());
-        expect(block.kind === 'envelope' && [block.starts.length, block.starts[0], block.ends.at(-1)]).toEqual([buckets, samples.times[0], samples.times.at(-1)]);
+        // A coarse level holds the run's whole buckets: the rows past them are read from level 0.
+        const buckets = Math.floor(rows / 8), { block } = await reader.entries({ columns, level: 1, first: 0, count: buckets, maxBytes: 8 << 20 }, signal());
+        expect(block.kind === 'envelope' && [block.starts.length, block.starts[0], block.ends.at(-1)]).toEqual([buckets, samples.times[0], samples.times[8 * buckets - 1]]);
         await expect(reader.rows({ columns: ['no such column'], maxBytes: 4096 }, signal())).rejects.toMatchObject({ code: 'invalid' });
       });
       expect((await run.artifacts).map(artifact => artifact.name).sort()).toEqual(['log', 'results', 'solver']);

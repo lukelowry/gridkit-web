@@ -36,7 +36,7 @@ const rowsOf = (first: number, last: number, columns: number, rate: number, valu
 
 // The store, as the solver service's store_test.go checks it.
 
-it('folds every level\'s entries from their rows, the last while it fills, however the rows arrive; a gap stays a gap', async () => {
+it('folds every level\'s whole entries from their rows, however the rows arrive; a gap stays a gap', async () => {
   const width = 200, store = storeOf(names(width)), columns = [width - 1, 3, 0];
   const value = (i: number, column: number) => i === 77 && column === 3 ? NaN : Math.sin(i * (column + 1) / 50);
   /** The least and greatest of rows `first` to `last` of `column`, or NaN where one has a gap. */
@@ -49,8 +49,8 @@ it('folds every level\'s entries from their rows, the last while it fills, howev
     await store.append(rowsOf(previous, count, width, 100, value));
     previous = count;
     for (let level = 0; level < store.levels; level++) {
-      const span = 8 ** level, n = Math.ceil(count / span);
-      const entries = Array.from({ length: n }, (_, index) => [index * span, Math.min((index + 1) * span, count) - 1] as const);
+      const span = 8 ** level, n = Math.floor(count / span);
+      const entries = Array.from({ length: n }, (_, index) => [index * span, (index + 1) * span - 1] as const);
       const starts = entries.map(([first]) => first / 100), ends = entries.map(([, last]) => last / 100);
       const folded = entries.flatMap(([first, last]) => columns.map(column => fold(first, last, column)));
       const lows = folded.map(([low]) => low), highs = folded.map(([, high]) => high);
@@ -113,7 +113,7 @@ it('answers the shared wire fixture exactly as the solver service does', async (
   const revision = { rows: store.extent.rows, state: 'completed', range: [store.extent.start, store.extent.end] };
   const rows = readRows(store, store.extent, checkRows(store, { columns: fixture.columns, maxBytes: 4096 }));
   expect({ header: { ...revision, first: rows.first, count: rows.count }, values: [...rows.values] }).toEqual(decoded(fixture.replies.rows));
-  // The coarse level's whole bucket, and the one still filling.
+  // The coarse level's one whole bucket: rows 8 and 9 are read from level 0.
   const query = { columns: fixture.columns, level: 1, first: 0, count: 2, maxBytes: 4096 };
   const entries = readEntries(store, store.extent, checkEntries(store, query), query);
   expect({ header: { ...revision, first: entries.first, count: entries.count }, values: [...entries.values] }).toEqual(decoded(fixture.replies.entries));
@@ -126,7 +126,7 @@ it('stops entries at what is recorded, and refuses a level it holds no whole ent
     const query = { columns: ['a'], level: 0, first: 0, count: 8, maxBytes: 4096, ...asked };
     return readEntries(store, store.extent, checkEntries(store, query), query).count;
   };
-  expect([read({ first: 8 }), read({ first: 10 }), read({ level: 1 })]).toEqual([2, 0, 2]);
+  expect([read({ first: 8 }), read({ first: 10 }), read({ level: 1 })]).toEqual([2, 0, 1]);
   // Two coarse entries are 64 bytes: their starts, ends, minima and maxima.
   for (const query of [{ columns: [] }, { level: -1 }, { level: 2 }, { first: -1 }, { count: 0 }, { level: 1, count: 2, maxBytes: 63 }, { maxBytes: (16 << 20) + 1 }])
     expect(() => read(query), JSON.stringify(query)).toThrow('Invalid read.');

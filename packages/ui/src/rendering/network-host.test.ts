@@ -15,7 +15,7 @@ vi.mock('./view.js', () => ({ CaseView: class {
   input = undefined;
   view = { done: mocks.done, fit: mocks.fit, on: vi.fn(), insets: [0, 0, 0, 0], waiting: ['compiling'] };
   open(...args: unknown[]) { return mocks.open(...args); }
-  show() { return false; }
+  show() {}
   draw() {}
   destroy() { mocks.destroy(); }
 } }));

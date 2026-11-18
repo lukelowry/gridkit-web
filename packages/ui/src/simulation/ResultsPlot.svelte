@@ -60,9 +60,9 @@
     ease: 0,
     // The dock names the quantity, units, and time; the canvas keeps only the numeric axes.
     space: { plot: { x: { label: null }, y: { label: null } } },
-    // Traces keep 4.5:1 contrast with the plot's ground, or 7:1 in high contrast.
+    // Traces keep 4.5:1 contrast with the plot's ground, or 7:1 in high contrast. The tick labels sit 2 px in from the canvas's edges.
     theme: { base: preferences.theme, background: palette.background, grid: { color: palette.grid }, contrast: preferences.contrast === 'high' ? 7 : 4.5,
-      focus: focusOf(preferences.value, palette),
+      padding: 2, focus: focusOf(preferences.value, palette),
       text: { color: palette.ticks, ...typography }, plot: { playhead: palette.text } },
     marks: [{ lines: [plotDataset, 'Trace'], trace: 'value', interpolation: 'linear', width: preferences.contrast === 'high' ? 2.5 : 1.5,
       color: { colormap: { kind: 'categorical', colors: [palette.trace, '#0072b2', '#009e73', '#d55e00', '#cc79a7', '#56b4e9', '#e69f00', '#6c6c6c'] }, value: '$series' } }],
@@ -72,45 +72,22 @@
   onMount(() => {
     let disposed = false;
     let live: View | undefined;
-    let stopResize: (() => void) | undefined;
     const listeners: (() => void)[] = [];
-    let measured = '';
+    let reported = '';
     // Resolve the shared caption role once and on resize, never on playback frames.
     const readTypography = () => {
       const css = getComputedStyle(canvas), font = css.fontFamily, size = parseFloat(css.fontSize);
       if (typography?.font !== font || typography?.size !== size) typography = { font, size };
     };
-    // Latkit reserves 1.5 em outside numeric gutters. Keep the labels, with just 2 px outside them.
-    const compactInsets = () => {
-      if (!live) return;
-      const edge = 2 - 1.5 * (typography?.size ?? 14);
-      live.insets = [edge, edge, edge, edge];
-    };
     readTypography();
-    // The axis's ends on screen: projecting the times shown finds them wherever the value labels leave the plot area. Until the
-    // plot draws its first frame there is no layout to project into, only a canvas of the browser's default size.
-    const measure = () => {
-      const camera = live?.camera;
-      if (disposed || !live?.stats.frames || !canvas.clientWidth || !camera || !('x' in camera)) return;
-      const value = camera.y?.[0] ?? 0, start = live.screen([camera.x[0], value, 0]), end = live.screen([camera.x[1], value, 0]);
-      if (!start || !end) return;
-      const axis = { left: start[0], right: canvas.clientWidth - end[0], from: camera.x[0], to: camera.x[1] }, key = JSON.stringify(axis);
-      if (key !== measured) { measured = key; onaxis(axis); }
-      return camera;
+    // The time axis runs along where marks draw, across the times the camera shows. Until the plot draws, marks draw nowhere.
+    const report = () => {
+      const camera = live?.camera, [left, , width] = live?.area ?? [0, 0, 0, 0];
+      if (disposed || !width || !camera || !('x' in camera)) return;
+      const axis = { left, right: canvas.clientWidth - left - width, from: camera.x[0], to: camera.x[1] }, key = JSON.stringify(axis);
+      if (key !== reported) { reported = key; onaxis(axis); }
     };
-    // The GPU's frames are every view's, and its listeners run before the views draw. Once this plot has drawn since the change,
-    // the microtask after that draw reads its layout, and nothing listens any more: an idle plot stays idle.
-    const afterResize = () => {
-      stopResize?.(); stopResize = undefined;
-      if (!live || !canvas.clientWidth || !canvas.clientHeight) return;
-      const view = live, drawn = view.stats.frames;
-      const stop = stopResize = view.gpu.on('frame', () => queueMicrotask(() => {
-        if (disposed || stopResize !== stop || view.stats.frames === drawn) return;
-        stop(); stopResize = undefined;
-        measure();
-      }));
-    };
-    const observer = new ResizeObserver(() => { readTypography(); compactInsets(); afterResize(); });
+    const observer = new ResizeObserver(readTypography);
     observer.observe(canvas);
     void (async () => {
       try {
@@ -118,25 +95,26 @@
         if (disposed) return;
         live = await View.create(canvas, scene, { sources: [source], camera: { x: [...opening.x], y: opening.y ? [...opening.y] : null } });
         if (disposed) { live.destroy(); return; }
-        compactInsets();
         appliedView = live; appliedVersion = camera.version;
-        // Tiles keep refining while valid frames are on screen: the plot is ready once one is drawn.
         listeners.push(live.on('at', at => onseek(at)), live.on('hovered', event => { hit = event.hit; onhover(elements.channel(hit?.row ?? null)?.element ?? null); }),
           live.on('selection', ({ rows, trigger }) => {
             if (!trigger) return;
             const row = rows.find(row => row.data === source.name && row.table === 'Trace' && row.ids.length);
             onselect(elements.channel(row ? { data: row.data, table: row.table, id: row.ids[0]! } : null)?.element ?? null);
           }),
-          live.on('camera', () => {
-            const camera = measure();
-            if (camera) onviewport({ x: [...camera.x], y: camera.y ? [...camera.y] : null });
+          // A resize or wider value labels move where marks draw; a pan or a zoom moves the times.
+          live.on('area', report),
+          live.on('camera', camera => {
+            report();
+            if ('x' in camera) onviewport({ x: [...camera.x], y: camera.y ? [...camera.y] : null });
           }),
-          live.on('waiting', () => { ready ||= live!.stats.frames > 0; measure(); }),
+          // Tiles keep refining while valid frames are on screen: the plot is ready once one is drawn.
+          live.on('waiting', () => { ready ||= live!.stats.frames > 0; }),
           live.on('error', failure => { error = failure.message; }));
-        view = live; afterResize();
+        view = live;
       } catch (cause) { if (!disposed) error = errorMessage(cause); }
     })();
-    return () => { disposed = true; onhover(null); ondetail(null); observer.disconnect(); stopResize?.(); listeners.forEach(off => off()); live?.destroy(); };
+    return () => { disposed = true; onhover(null); ondetail(null); observer.disconnect(); listeners.forEach(off => off()); live?.destroy(); };
   });
   $effect(() => { if (view) view.scene = scene; });
   // A new set swaps what the view draws: the canvas, its camera, and its axes stay.

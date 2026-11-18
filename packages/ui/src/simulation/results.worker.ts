@@ -135,16 +135,19 @@ export async function* networkPages(reader: ResultReader, { plan, every, maxByte
   }
 }
 
-/** Entries a span of time tiles holds: a multiple of 8, near 1 MiB of Float32 least and greatest values. */
-const chunkOf = (columns: number) => Math.max(8, Math.floor((1 << 17) / columns / 8) * 8);
+/**
+ * Entries a span of time tiles holds: a multiple of 8, near 1 MiB of the run's rows, which the solver reads whole for any columns.
+ * latkit fetches the last span of each level below the one it draws again with every refresh, so a span stays small however few
+ * series the plot shows; its Float32 values are fewer still.
+ */
+const chunkOf = (width: number) => Math.max(8, Math.floor((1 << 17) / width / 8) * 8);
 
 /**
- * File `path` of `set`'s time tiles, as latkit fetches it: the manifest, the base dataset, or a span of one level. `shift` gives
- * each column's measure, taken in Float64 before the values become Float32.
+ * File `path` of `set`'s time tiles, as latkit fetches it: the manifest, the base dataset, or a span of `chunk` entries of one
+ * level. `shift` gives each column's measure, taken in Float64 before the values become Float32.
  */
-async function tileFile(reader: ResultReader, { columns, series }: TileSet, path: string,
+async function tileFile(reader: ResultReader, { columns, series }: TileSet, path: string, chunk: number,
   shift: () => Promise<((column: string) => Affine) | undefined>): Promise<Uint8Array> {
-  const chunk = chunkOf(columns.length);
   if (path === 'frames.json') {
     const { rows } = await reader.rows({ columns: columns.slice(0, 1), count: 1, maxBytes: 16 });
     let levels = 0;
@@ -168,6 +171,8 @@ async function tileFile(reader: ResultReader, { columns, series }: TileSet, path
  */
 export class ResultHost {
   #reader: ResultReader | undefined;
+  /** Entries a span of the open run's time tiles holds, set as it opens. */
+  #chunk = 0;
   #feeds = new Map<number, { pages: AsyncGenerator<NetworkPage>; abort: AbortController }>();
   /** Each tile set's measure, read once. */
   #shifts = new Map<string, Promise<((column: string) => Affine) | undefined>>();
@@ -177,6 +182,7 @@ export class ResultHost {
       case 'open':
         this.close();
         this.#reader = this.open(command.port);
+        this.#chunk = chunkOf(command.width);
         return null;
       case 'follow': {
         this.#stop(command.feed);
@@ -188,7 +194,7 @@ export class ResultHost {
       case 'tile': {
         const reader = this.#reader;
         if (!reader) throw new Error('No results to read.');
-        return tileFile(reader, command.set, command.path, () => this.#shift(reader, command.set));
+        return tileFile(reader, command.set, command.path, this.#chunk, () => this.#shift(reader, command.set));
       }
       case 'next': {
         const feed = this.#feeds.get(command.feed);

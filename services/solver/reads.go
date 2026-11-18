@@ -98,7 +98,8 @@ func (s *Service) rows(w http.ResponseWriter, r *http.Request) error {
 }
 
 // EntriesQuery asks for `count` entries of one level from entry `first`: rows at level 0, and above it buckets of 8^level rows,
-// each the least and greatest of its rows. A level's last bucket holds the rows so far while it fills.
+// each the least and greatest of its rows. Above level 0, whole buckets only: latkit reads the rows past a level's last whole
+// bucket from the levels below.
 type EntriesQuery struct {
 	Columns  []string `json:"columns"`
 	Level    int      `json:"level"`

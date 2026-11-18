@@ -101,7 +101,7 @@ async function pictureViews(request: ExportRequest, drawing: Drawing, frame: Exp
       const source = request.plot.view;
       const camera: Camera = drawing.framing === 'fit' && frame ? { x: [...frame.span], y: null } : source.camera;
       const traces = await View.create(null, pictureScene(source.scene, drawing.text), { sources: source.sources, camera, ...signal && { signal } });
-      owned.push(traces); traces.at = main.at; traces.insets = source.insets; traces.selection = source.selection;
+      owned.push(traces); traces.at = main.at; traces.selection = source.selection;
       placed.push({ view: traces, region: layout.plot });
     }
     return { main, views: [main, ...owned.filter(view => view !== main)], placed, scale: layout.scale, close };

@@ -25,9 +25,9 @@ func newTestStore(t *testing.T, columns []string) *Store {
 	return store
 }
 
-// Every level's entries are what folding their rows gives, the last one too while it fills, however the rows arrive. A gap stays a
-// gap at every level: a bucket holding one is NaN.
-func TestEveryLevelFoldsItsRowsTheLastWhileItFills(t *testing.T) {
+// Every level's whole entries are what folding their rows gives, however the rows arrive. A gap stays a gap at every level: a
+// bucket holding one is NaN.
+func TestEveryLevelFoldsItsRows(t *testing.T) {
 	const width = 200
 	store, columns, previous := newTestStore(t, names(width)), []int{width - 1, 3, 0}, 0
 	value := func(i, c int) float64 {
@@ -58,7 +58,7 @@ func TestEveryLevelFoldsItsRowsTheLastWhileItFills(t *testing.T) {
 			span, n := 1<<(3*level), view.entries(level)
 			var starts, ends, lows, highs []float64
 			for index := range n {
-				first, last := index*span, min((index+1)*span, count)-1
+				first, last := index*span, (index+1)*span-1
 				starts, ends = append(starts, float64(first)/100), append(ends, float64(last)/100)
 				for _, column := range columns {
 					low, high := fold(first, last, column)

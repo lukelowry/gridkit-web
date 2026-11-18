@@ -4,7 +4,7 @@ import { plotDataset } from './plot.js';
 
 /** What the page asks of a run's results worker, each answered once by its id: its run's port, each feed of it by number, and tiles. */
 export type ResultsCommand =
-  | { kind: 'open'; port: MessagePort }
+  | { kind: 'open'; port: MessagePort; width: number }
   | { kind: 'follow'; feed: number; request: NetworkFeed }
   | { kind: 'next'; feed: number }
   | { kind: 'stop'; feed: number }
@@ -55,8 +55,8 @@ export class RunResults {
   /** How many rows the run has recorded, as it last said. */
   #rows = 0;
 
-  /** Reads the run whose port `port` gives, once it does. */
-  constructor(port: Promise<MessagePort>) {
+  /** Reads the run whose port `port` gives, once it does: `width` columns, a channel each. */
+  constructor(port: Promise<MessagePort>, width: number) {
     this.#worker = new Worker(new URL('./results.worker.ts', import.meta.url), { type: 'module' });
     this.#worker.onmessage = ({ data }: MessageEvent<ResultsReply>) => {
       const pending = this.#pending.get(data.id);
@@ -69,7 +69,7 @@ export class RunResults {
     this.#worker.onmessageerror = () => fault(new Error('Cannot decode the result worker\'s reply.'));
     this.#opened = port.then(opened => {
       if (this.#closed) { opened.close(); throw this.#closed; }
-      return this.#request({ kind: 'open', port: opened }, undefined, [opened]);
+      return this.#request({ kind: 'open', port: opened, width }, undefined, [opened]);
     });
     // A feed hears why it could not open.
     this.#opened.catch(() => {});

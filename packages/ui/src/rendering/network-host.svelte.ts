@@ -78,7 +78,8 @@ export class NetworkHost {
     const input = this.source.scene(), before = opened.input;
     opened.draw(this.source.extra());
     try {
-      if (opened.show(input) && before && spaceOf(before.scene) !== spaceOf(input.scene)) this.fit();
+      opened.show(input);
+      if (before && spaceOf(before.scene) !== spaceOf(input.scene)) this.fit();
       this.fault = '';
     } catch (error) { this.fault = errorMessage(error, 'Rendering is unavailable.'); }
   }

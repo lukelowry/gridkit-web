@@ -63,6 +63,8 @@
   let plotAttempt = $state(0);
   let plotView = $state<ResultsPlot>();
   async function retryPlot() {
+    // latkit fetches the plot's failed files again at once; otherwise they wait out its retry, up to a minute.
+    run.plot?.source.refresh();
     plotAttempt++;
     await tick();
     plotView?.focus();

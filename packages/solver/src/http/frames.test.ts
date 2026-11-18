@@ -34,10 +34,10 @@ it('reads what the solver writes, across fragmented transport reads', async () =
   expect([...new Float64Array(planes!, 0, count)]).toEqual(fixture.rows.map(row => row[0]));
   expect([...new Float64Array(planes!, 8 * count, count)]).toEqual(fixture.rows.map(row => row[1]));
 
-  // A coarse level's starts, ends, minima and maxima: its whole bucket, and the one still filling.
+  // A coarse level's starts, ends, minima and maxima: its one whole bucket.
   const entries = await planesReply(answer(decoded(fixture.replies.entries), 3), { columns: fixture.columns, level: 1, first: 0, count: 2, maxBytes: 4096 });
-  expect(entries.header).toMatchObject({ rows: count, first: 0, count: 2 });
-  expect([...new Float64Array((await partsOf(entries))[0]!)]).toEqual([0, 8, 7, 9, 0.7, 0.6, 1.3, 1.4]);
+  expect(entries.header).toMatchObject({ rows: count, first: 0, count: 1 });
+  expect([...new Float64Array((await partsOf(entries))[0]!)]).toEqual([0, 7, 0.7, 1.3]);
 });
 
 it('refuses a truncated reply, an unreadable header, and more than it asked for, before holding it', async () => {

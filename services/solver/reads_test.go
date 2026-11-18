@@ -57,7 +57,7 @@ func TestSharedWireFixture(t *testing.T) {
 		want  string
 	}{
 		"rows": {RowsQuery{Columns: fixture.Columns, MaxBytes: 4096}, fixture.Replies.Rows},
-		// The coarse level's whole bucket, and the one still filling.
+		// The coarse level's one whole bucket: rows 8 and 9 are read from level 0.
 		"entries": {EntriesQuery{Columns: fixture.Columns, Level: 1, Count: 2, MaxBytes: 4096}, fixture.Replies.Entries},
 	} {
 		text, _ := json.Marshal(check.query)
@@ -89,7 +89,7 @@ func TestEntriesStopAtWhatIsRecordedAndRefuseWhatCannotFit(t *testing.T) {
 	}{
 		{EntriesQuery{Columns: a, First: 8, Count: 8, MaxBytes: 4096}, 2},
 		{EntriesQuery{Columns: a, First: 10, Count: 8, MaxBytes: 4096}, 0},
-		{EntriesQuery{Columns: a, Level: 1, Count: 8, MaxBytes: 4096}, 2},
+		{EntriesQuery{Columns: a, Level: 1, Count: 8, MaxBytes: 4096}, 1},
 	} {
 		var header PlanesHeader
 		if answer(t, postJSON(t, address, check.query), &header); header.Count != check.count {

@@ -46,14 +46,21 @@ describe('studies GridKit runs', { timeout: 300_000 }, () => {
     // Every column this UI compiled is one GridKit recorded.
     const everything = channels.map(channel => channel.column);
     await reader.rows({ columns: everything, at: 0, count: 1, maxBytes: 8*1024*1024 });
-    // The coarsest level the run holds keeps the native recording's minimum exactly, the run whole in a few entries.
+    // The coarsest level the run holds keeps the native recording's minimum exactly: its whole buckets in a few entries, and the rows
+    // past them, as latkit reads them, from level 0.
+    const recorded = final.progress!.rows;
     let level = 0;
-    while (8 ** (level + 1) <= final.progress!.rows) level++;
+    while (8 ** (level + 1) <= recorded) level++;
     expect(level, 'The run reaches a coarse level.').toBeGreaterThan(0);
-    const count = Math.ceil(final.progress!.rows / 8 ** level), { block } = await reader.entries({ columns: ids, level, first: 0, count, maxBytes: 16 * count * (1 + ids.length) });
+    const count = Math.floor(recorded / 8 ** level), past = recorded - count * 8 ** level;
+    const { block } = await reader.entries({ columns: ids, level, first: 0, count, maxBytes: 16 * count * (1 + ids.length) });
     if (block.kind !== 'envelope') throw new Error('A coarse level reads as an envelope.');
     const least = new Float64Array(ids.length).fill(Infinity);
     for (const [index, value] of block.minimum.entries()) least[index % ids.length] = Math.min(least[index % ids.length]!, value);
+    if (past) {
+      const { samples: tail } = await reader.rows({ columns: ids, from: count * 8 ** level, count: past, maxBytes: 8 * past * (1 + ids.length) });
+      for (const [index, value] of tail.values.entries()) least[index % ids.length] = Math.min(least[index % ids.length]!, value);
+    }
     const { samples: initial } = await reader.rows({ columns: ids, at: 0, count: 1, maxBytes: 1024*1024 });
     const column = voltages.findIndex(channel => channel.label === String(faulted));
     expect(initial.values[column]! - least[column]!, 'The faulted bus shows a voltage drop.').toBeGreaterThan(0.05);

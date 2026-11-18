@@ -31,8 +31,8 @@ export function checkEntries(store: Store, { columns: names, level, first, count
   return columns;
 }
 
-/** Entries of one level: the whole ones, and the one still filling. */
+/** Entries of one level: whole ones only. */
 export function readEntries(store: Store, view: Extent, columns: readonly number[], { level, first, count }: EntriesQuery) {
-  const held = Math.max(0, Math.min(count, Math.ceil(view.rows / 8 ** level) - first));
+  const held = Math.max(0, Math.min(count, Math.floor(view.rows / 8 ** level) - first));
   return { first, count: held, values: held ? store.planes(level, first, held, columns) : new Float64Array() };
 }

@@ -123,7 +123,8 @@ export interface RowsReply extends Revision { readonly samples: Samples }
 
 /**
  * Entries of one level of detail, by absolute index: rows at level 0, and above it buckets of 8^level rows, each the least and
- * greatest of its rows. A level's last bucket holds the rows so far while it fills.
+ * greatest of its rows. Above level 0, whole buckets only: latkit reads the rows past a level's last whole bucket from the levels
+ * below.
  */
 export interface EntriesQuery {
   readonly columns: readonly string[];

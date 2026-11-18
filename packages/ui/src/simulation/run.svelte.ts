@@ -98,7 +98,7 @@ export class RunSession {
       const [{ channels, ...request }] = await Promise.all([compiled,
         latkit().catch((cause: LatkitError) => { if (cause?.code !== 'unsupported') throw cause; })]);
       signal.throwIfAborted();
-      const run = this.#execution = client.start(request), results = this.#results = new RunResults(run.results());
+      const run = this.#execution = client.start(request), results = this.#results = new RunResults(run.results(), channels.length);
       const parts = { results, extend: (range: TimeRange) => this.#extend(range), failed: (cause: unknown) => { this.error = errorMessage(cause); } };
       const recording = this.#recording = new Recording({ ...parts, rows: Math.ceil(tmax / dt_monitor) + 1 + 2 * events.length });
       this.#plotFeed = new PlotFeed({ results, timeline: this.timeline });
