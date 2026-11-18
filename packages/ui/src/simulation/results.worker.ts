@@ -18,6 +18,8 @@ export interface NetworkFeed {
 /** What a plot's time tiles hold: `columns`, measured as `basis` from `reference`. */
 export interface TileSet {
   readonly columns: readonly string[];
+  /** Each column's color, by index in the plot's palette; by its place without one. */
+  readonly series?: readonly number[];
   readonly basis: Basis;
   readonly reference: number | null;
 }
@@ -145,7 +147,7 @@ const chunkOf = (columns: number) => Math.max(8, Math.floor((1 << 17) / columns 
  * File `path` of `set`'s time tiles, as latkit fetches it: the manifest, the base dataset, or a span of one level. `shift` gives
  * each column's measure, taken in Float64 before the values become Float32.
  */
-export async function tileFile(reader: ResultReader, { columns }: TileSet, path: string,
+export async function tileFile(reader: ResultReader, { columns, series }: TileSet, path: string,
   shift: () => Promise<((column: string) => Affine) | undefined>): Promise<Uint8Array> {
   const chunk = chunkOf(columns.length);
   if (path === 'frames.json') {
@@ -156,7 +158,7 @@ export async function tileFile(reader: ResultReader, { columns }: TileSet, path:
       frames: [{ table: 'Trace', field: 'value', levels, frames: [0, rows] }] }));
   }
   if (path === 'base.latk')
-    return new Patch(plotDataset).axis('Time', 's').replace('Trace', columns, { series: Float32Array.from(columns, (_, i) => i) }).toBytes();
+    return new Patch(plotDataset).axis('Time', 's').replace('Trace', columns, { series: Float32Array.from(series ?? columns.map((_, i) => i)) }).toBytes();
   const [level, index] = path.slice(0, -'.latk'.length).split('/').map(Number) as [number, number];
   const first = index * chunk, planes = level ? 2 : 1;
   const { block } = await reader.entries({ columns, level, first, count: chunk, maxBytes: 8 * planes * chunk * (1 + columns.length) });

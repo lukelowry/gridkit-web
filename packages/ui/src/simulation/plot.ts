@@ -12,10 +12,13 @@ export interface PlotViewport {
   readonly y: TimeRange | null;
 }
 
-/** Where the plot draws its time axis, so controls can line up with it: CSS pixels from the plot's left, and the times shown. */
+/**
+ * Where the plot draws its time axis, so controls can line up with it: its ends as CSS pixels in from the plot's left and right
+ * edges, which hold as the plot is resized, and the times shown.
+ */
 export interface PlotAxis {
   readonly left: number;
-  readonly width: number;
+  readonly right: number;
   readonly from: number;
   readonly to: number;
 }

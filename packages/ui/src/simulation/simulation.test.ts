@@ -7,7 +7,7 @@ import { CaseDocument, parseCase } from '@gridkit/library';
 import { referenceField } from '../domain/measure.js';
 import type { Progress, ResultReader, RowsQuery, RunState, RunUpdate, Solver } from '@gridkit/solver';
 import { Connection } from '../services/connection.svelte.js';
-import type { ResultsMessage, ResultsReply } from './results.js';
+import { RunResults, type ResultsMessage, type ResultsReply } from './results.js';
 import { ResultHost, transferOf } from './results.worker.js';
 import { Simulation } from './simulation.svelte.js';
 import { defaultStudy } from '@gridkit/library/gridkit';
@@ -236,22 +236,19 @@ for (const fixture of [ieee39, wecc240]) {
     expect(run.plot!.camera).toBe(camera);
     expect(run.plot!.camera.x).toEqual([0, 20]);
 
-    // A gesture's camera is kept without commanding the view: latkit fetches what the window shows, from the same tiles.
-    const version = run.plot!.camera.version;
+    // A gesture's camera is remembered for a plot drawn again: it commands nothing, and latkit fetches what the window shows.
     run.viewport({ x: [0, 20], y: [0.9, 1.1] });
-    const manual = run.plot!.camera;
     advance(500, 5, 3);
     await vi.waitFor(() => expect(run.range[1]).toBe(5));
-    expect(run.plot!.camera).toBe(manual);
-    expect(manual.version).toBe(version);
+    expect(run.plotOpening).toEqual({ x: [0, 20], y: [0.9, 1.1] });
     run.viewport({ x: [1, 2], y: [0.8, 1.2] });
-    expect(run.plot!.source).toBe(tiles);
-    const zoomed = run.plot!.camera;
     run.seek(99);
     expect(run.playhead.time).toBe(5);
     run.follow();
     expect(run.live).toBe(true);
-    expect(run.plot!.camera).toBe(zoomed);
+    expect(run.plot!.camera).toBe(camera);
+    expect(run.plot!.source).toBe(tiles);
+    expect(run.plotOpening).toEqual({ x: [1, 2], y: [0.8, 1.2] });
 
     const angle = run.quantities.find(quantity => quantity.output === 'Va')!;
     run.select(angle.key);
@@ -300,7 +297,7 @@ it('runs a study where the browser has no device to draw with: its data loads be
 it('plots every series of a large quantity, narrows to selected and pinned elements when asked, and keeps network playback independent', async () => {
   const value = { ...ieee39, buses: [...ieee39.buses, ...Array.from({ length: 513 - ieee39.buses.length }, (_, i) => ({ ...ieee39.buses[0]!, number: 10_000 + i }))] };
   const { simulation } = await setup(value), run = simulation.run!;
-  const [first, second] = run.quantity!.channels;
+  const [first, second] = run.quantity!.channels, sets = vi.spyOn(RunResults.prototype, 'tiles'), colors = () => sets.mock.calls.at(-1)![0].series;
   expect(run.plotMode).toBe('all');
   expect(run.plot!.quantity.channels).toHaveLength(513);
   run.setPlotMode('focused');
@@ -310,8 +307,13 @@ it('plots every series of a large quantity, narrows to selected and pinned eleme
   run.pinPlot(first!.element);
   run.focusPlot(second!.element);
   await vi.waitFor(() => expect(run.plot?.quantity.channels).toEqual([first, second]));
+  expect(colors()).toEqual([0, 1]);
+  // A pinned element keeps its color as others are unpinned.
+  run.pinPlot(second!.element);
   run.unpinPlot(first!.element);
   await vi.waitFor(() => expect(run.plot?.quantity.channels).toEqual([second]));
+  expect(colors()).toEqual([1]);
+  run.unpinPlot(second!.element);
   run.focusPlot(null);
   expect(run.plot).toBeUndefined();
   run.setPlotMode('all');

@@ -43,9 +43,9 @@
   const time = $derived(run.playhead.time);
   let detail = $state<{ label: string; value: string; at: string } | null>(null);
   let measured = $state.raw<PlotAxis | null>(null);
-  const axis = $derived(plot ? measured : null);
-  // The scrubber spans the plot's time axis and the times it shows, so each moment sits under the same moment on the plot.
-  const domain = $derived<TimeRange>(axis ? [axis.from, axis.to] : run.timeline);
+  // The scrubber spans the plot's time axis and the times it shows, so each moment sits under the same moment on the plot. Where the
+  // axis was last drawn holds while no plot is shown and across runs, so the rail stays put; its times are then the run's.
+  const domain = $derived<TimeRange>(plot && measured ? [measured.from, measured.to] : run.timeline);
   const span = $derived(Math.max(domain[1] - domain[0], Number.EPSILON));
   const fraction = (at: number) => Math.min(1, Math.max(0, (at - domain[0]) / span));
   const percent = (at: number) => `${fraction(at) * 100}%`;
@@ -63,7 +63,7 @@
   let plotAttempt = $state(0);
   let plotView = $state<ResultsPlot>();
   async function retryPlot() {
-    measured = null; plotAttempt++;
+    plotAttempt++;
     await tick();
     plotView?.focus();
   }
@@ -180,10 +180,11 @@
         <p class="series-count" role="status">{plot?.quantity.channels.length ?? 0} of {run.quantity.channels.length} series · selected and pinned</p>
       {/if}
       {#if plot}
-        {#key plot.source}{#key plotAttempt}
-          <ResultsPlot bind:this={plotView} {selected} {hovered} {onselect} {onhover} ondetail={next => { detail = next; }} {plot} rows={run.rows} playhead={run.playhead} {preferences} onretry={retryPlot}
-            onseek={at => run.seek(at)} onviewport={viewport => run.viewport(viewport)} onaxis={next => { measured = next; }} />
-        {/key}{/key}
+        <!-- One view for the run: a new quantity, measure, or set of series changes what it draws, never the canvas. -->
+        {#key plotAttempt}
+          <ResultsPlot bind:this={plotView} {selected} {hovered} {onselect} {onhover} ondetail={next => { detail = next; }} {plot} opening={run.plotOpening}
+            playhead={run.playhead} {preferences} onretry={retryPlot} onseek={at => run.seek(at)} onviewport={viewport => run.viewport(viewport)} onaxis={next => { measured = next; }} />
+        {/key}
       {:else}
         <p class="results-empty" role="status">{run.plotMode === 'focused' && run.quantity
           ? 'Select an element in Network or Table to plot it. Pin selections in Plot options to compare.'
@@ -192,7 +193,7 @@
     </div>
     <!-- The measured plot axis owns the rail; controls never shorten or offset its domain. -->
     <div class="timeline">
-      <div class="scrubber" style:left={axis ? axis.left + 'px' : '8px'} style:width={axis ? axis.width + 'px' : 'calc(100% - 16px)'}>
+      <div class="scrubber" style:left={`${measured?.left ?? 8}px`} style:right={`${measured?.right ?? 8}px`}>
         <div class="scrubber__track" aria-hidden="true">
           <i class="scrubber__recorded" style:transform={`scaleX(${fraction(run.range[1])})`}></i>
           <i class="scrubber__played" style:transform={`scaleX(${fraction(time)})`}></i>

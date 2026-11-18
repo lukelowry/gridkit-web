@@ -1,6 +1,6 @@
 <script lang="ts">
   import { watchNotice } from '../ui/toasts.svelte.js';
-  import { onMount, untrack } from 'svelte';
+  import { onMount } from 'svelte';
   import type { ElementRef } from '@gridkit/library';
   import type { Channel } from '@gridkit/library/gridkit';
   import { sameReference } from '../domain/entries.js';
@@ -14,13 +14,13 @@
   import { themeColors } from '../ui/color.js';
   import { errorMessage } from '../ui/errors.js';
 
-  let { plot, rows, playhead, preferences, onseek, onviewport, onaxis, onretry, selected, hovered, onselect, onhover, ondetail }: {
+  let { plot, opening, playhead, preferences, onseek, onviewport, onaxis, onretry, selected, hovered, onselect, onhover, ondetail }: {
     selected: ElementRef | null; hovered: ElementRef | null;
     onselect: (ref: ElementRef | null) => void; onhover: (ref: ElementRef | null) => void;
     ondetail: (detail: { label: string; value: string; at: string } | null) => void;
     plot: PlotData; playhead: Playhead; preferences: PreferencesState;
-    /** How many rows the run has recorded: more is fetched as it grows. */
-    rows: number;
+    /** Where the view opens: where gestures last left the camera. */
+    opening: PlotViewport;
     onretry: () => void;
     onseek: (time: number) => void;
     /** The times and values a gesture put in view. */
@@ -37,9 +37,10 @@
   let appliedView: View | undefined;
   let appliedVersion = -1;
   export function focus() { canvas.focus({ preventScroll: true }); }
-  const quantity = $derived(plot.quantity);
+  // Each changes only when what is drawn does, so a new camera re-derives nothing.
+  const source = $derived(plot.source), quantity = $derived(plot.quantity), camera = $derived(plot.camera);
   const unit = $derived(measureUnit(quantity.unit, plot.basis));
-  const elements = $derived(new PlotElements(plot.source.name, quantity.channels));
+  const elements = $derived(new PlotElements(source.name, quantity.channels));
   const label = (channel: Channel) => (channel.class ?? (channel.element.collection === 'buses' ? 'Bus' : 'Device')) + ' ' + channel.label;
   const inspectionId = $props.id();
   const inspection = $derived([selected && elements.channels(selected)[0] ? 'Selected: ' + label(elements.channels(selected)[0]!) : '', hovered && elements.channels(hovered)[0] ? 'Hovered: ' + label(elements.channels(hovered)[0]!) : ''].filter(Boolean).join('. '));
@@ -93,7 +94,7 @@
       if (disposed || !live?.stats.frames || !canvas.clientWidth || !camera || !('x' in camera)) return;
       const value = camera.y?.[0] ?? 0, start = live.screen([camera.x[0], value, 0]), end = live.screen([camera.x[1], value, 0]);
       if (!start || !end) return;
-      const axis = { left: start[0], width: end[0] - start[0], from: camera.x[0], to: camera.x[1] }, key = JSON.stringify(axis);
+      const axis = { left: start[0], right: canvas.clientWidth - end[0], from: camera.x[0], to: camera.x[1] }, key = JSON.stringify(axis);
       if (key !== measured) { measured = key; onaxis(axis); }
       return camera;
     };
@@ -115,8 +116,7 @@
       try {
         await latkit();
         if (disposed) return;
-        const camera = plot.camera;
-        live = await View.create(canvas, scene, { sources: [plot.source], camera: { x: [...camera.x], y: camera.y ? [...camera.y] : null } });
+        live = await View.create(canvas, scene, { sources: [source], camera: { x: [...opening.x], y: opening.y ? [...opening.y] : null } });
         if (disposed) { live.destroy(); return; }
         compactInsets();
         appliedView = live; appliedVersion = camera.version;
@@ -124,7 +124,7 @@
         listeners.push(live.on('at', at => onseek(at)), live.on('hovered', event => { hit = event.hit; onhover(elements.channel(hit?.row ?? null)?.element ?? null); }),
           live.on('selection', ({ rows, trigger }) => {
             if (!trigger) return;
-            const row = rows.find(row => row.data === plot.source.name && row.table === 'Trace' && row.ids.length);
+            const row = rows.find(row => row.data === source.name && row.table === 'Trace' && row.ids.length);
             onselect(elements.channel(row ? { data: row.data, table: row.table, id: row.ids[0]! } : null)?.element ?? null);
           }),
           live.on('camera', () => {
@@ -139,23 +139,17 @@
     return () => { disposed = true; onhover(null); ondetail(null); observer.disconnect(); stopResize?.(); listeners.forEach(off => off()); live?.destroy(); };
   });
   $effect(() => { if (view) view.scene = scene; });
+  // A new set swaps what the view draws: the canvas, its camera, and its axes stay.
+  $effect(() => { if (view && view.sources[0] !== source) view.sources = [source]; });
   $effect(() => { if (view) view.selection = elements.rows(selected); });
-  $effect(() => { if (view) view.hovered = hoveredChannel ? { data: plot.source.name, table: 'Trace', id: hoveredChannel.column } : null; });
+  $effect(() => { if (view) view.hovered = hoveredChannel ? { data: source.name, table: 'Trace', id: hoveredChannel.column } : null; });
   $effect(() => { if (view) return playhead.attach(view); });
-  // While the run records, the plot fetches what it shows of the rows since: one refresh at a time, the next once it is drawn.
-  let refreshed = untrack(() => rows), refreshing = $state(false);
+  // Only a command moves the camera: Fit, or a new measure.
   $effect(() => {
-    const current = view, recorded = rows;
-    if (!current || refreshing || recorded <= refreshed) return;
-    refreshing = true; refreshed = recorded;
-    untrack(() => plot.source).refresh();
-    void current.done().catch(() => {}).finally(() => { refreshing = false; });
-  });
-  $effect(() => {
-    const current = view, camera = plot.camera;
-    if (!current || (current === appliedView && camera.version === appliedVersion)) return;
-    current.camera = { x: [...camera.x], y: camera.y ? [...camera.y] : null };
-    appliedView = current; appliedVersion = camera.version;
+    const current = view, commanded = camera;
+    if (!current || (current === appliedView && commanded.version === appliedVersion)) return;
+    current.camera = { x: [...commanded.x], y: commanded.y ? [...commanded.y] : null };
+    appliedView = current; appliedVersion = commanded.version;
   });
   watchNotice(() => error ? 'The plot could not be drawn. ' + error : '', () => ({ action: { label: 'Retry plot', run: onretry } }));
 </script>

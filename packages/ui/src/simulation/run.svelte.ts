@@ -40,15 +40,14 @@ export class RunSession {
   /** What the run offers to download, once it has ended. */
   artifacts = $state.raw<readonly Artifact[]>([]);
   range = $state.raw<TimeRange>([0, 0]);
-  /** How many rows the run has recorded, as it last said. */
-  rows = $state(0);
   /** Whether the time shown follows the run as it records. */
   live = $state(true);
   /** The quantity the plot shows; a bus quantity is the one the network reads too. */
   quantity = $state.raw<Quantity>();
   /** Whether the plot draws every series of its quantity, or only the selected and pinned elements'. */
   plotMode = $state<'all' | 'focused'>('all');
-  pinned = $state.raw<readonly (ElementRef & { readonly label: string })[]>([]);
+  /** Elements kept in the focused plot, each with the color it keeps while pinned. */
+  pinned = $state.raw<readonly (ElementRef & { readonly label: string; readonly slot: number })[]>([]);
   #selected: ElementRef | null = null;
   /** What the plot and the network show of it. */
   basis = $state<Basis>('value');
@@ -74,6 +73,8 @@ export class RunSession {
   get sources(): Source[] { return [...this.data ? [this.data] : [], ...this.#switching ? [this.#switching] : []]; }
   get sampledFields(): readonly SampledField[] { return this.#recording?.fields ?? []; }
   get plot() { return this.#plotFeed?.plot; }
+  /** Where the plot opens when it is drawn again: where gestures last left its camera. */
+  get plotOpening(): PlotViewport { return this.#plotFeed?.opening ?? { x: this.timeline, y: null }; }
   #execution: Run | undefined;
   #results: RunResults | undefined;
   #branches: BranchState | undefined;
@@ -110,7 +111,7 @@ export class RunSession {
         this.busy = !isTerminal(update.state);
         if (update.state === 'failed') this.error = update.error.message;
         if (!update.progress) continue;
-        this.rows = update.progress.rows;
+        results.recorded(update.progress.rows);
         this.#extend(update.progress.range);
         if (this.channels.length) continue;
         this.channels = channels;
@@ -148,20 +149,29 @@ export class RunSession {
   pinPlot(selected: ElementRef) {
     const channel = this.quantity && channelsOf(this.quantity, [selected])[0];
     if (!channel || this.pinned.length >= pinnedSeriesLimit || this.pinned.some(ref => sameReference(ref, selected))) return;
-    this.pinned = [...this.pinned, { ...selected, label: `${channel.class ?? 'Bus'} ${channel.label}` }];
+    this.pinned = [...this.pinned, { ...selected, label: `${channel.class ?? 'Bus'} ${channel.label}`, slot: this.#freeSlot() }];
     this.plotMode = 'focused'; this.#showPlot();
   }
   unpinPlot(selected: ElementRef) {
     this.pinned = this.pinned.filter(ref => !sameReference(ref, selected));
     if (this.plotMode === 'focused') this.#showPlot();
   }
+  /** The first color no pinned element holds. */
+  #freeSlot() {
+    const taken = new Set(this.pinned.map(pin => pin.slot));
+    let slot = 0;
+    while (taken.has(slot)) slot++;
+    return slot;
+  }
   #showPlot() {
     const quantity = this.quantity;
     if (!quantity) return;
-    const channels = this.plotMode === 'all' ? quantity.channels : channelsOf(quantity, [...this.pinned, ...this.#selected ? [this.#selected] : []]);
+    if (this.plotMode === 'all') { this.#plotFeed?.show(quantity, this.basis, this.reference); return; }
+    const channels = channelsOf(quantity, [...this.pinned, ...this.#selected ? [this.#selected] : []]);
     if (!channels.length) { this.#plotFeed?.clear(); return; }
-    const shown = this.plotMode === 'all' ? quantity : { ...quantity, channels };
-    this.#plotFeed?.show(shown, this.basis, this.reference);
+    // A pinned element keeps its color while pinned, whatever is pinned or unpinned around it; the selection takes the first free.
+    const free = this.#freeSlot(), series = channels.map(channel => this.pinned.find(pin => sameReference(pin, channel.element))?.slot ?? free);
+    this.#plotFeed?.show({ ...quantity, channels }, this.basis, this.reference, series);
   }
 
   /** Plots `key`'s quantity; a bus quantity also becomes what the network shows. */

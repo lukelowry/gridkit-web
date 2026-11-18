@@ -28,6 +28,12 @@ export class Feed {
   stop() { this.#current?.abort(); this.#current = undefined; }
 }
 
+/**
+ * A tile set as the plot reads it: its tiles; the rows its index last listed and the entries in each span, from when it is first
+ * drawn; how many fetches a refresh waits on, of its index and of its spans at the run's edge; and whether a refresh is under way.
+ */
+interface TileState { readonly tiles: Tiles; index?: { rows: number; chunk: number }; awaited: number; refreshing: boolean }
+
 /** What a run says when its results cannot be read, as when the files this page was built with are gone since it opened. */
 const unreadable = "This run's results could not be read. Download the case, then reload the page.";
 
@@ -43,7 +49,11 @@ export class RunResults {
   #closed: Error | undefined;
   #opened: Promise<unknown>;
   /** Each tile set asked for, by its measure: shown again, it draws what it fetched. */
-  #tiles = new Map<string, Tiles>();
+  #tiles = new Map<string, TileState>();
+  /** The set asked for last, which the plot draws. */
+  #shown: TileState | undefined;
+  /** How many rows the run has recorded, as it last said. */
+  #rows = 0;
 
   /** Reads the run whose port `port` gives, once it does. */
   constructor(port: Promise<MessagePort>) {
@@ -97,19 +107,57 @@ export class RunResults {
   }
   /**
    * `set`'s time tiles, which latkit fetches through this worker as the plot window needs them. One per set: a set asked for again
-   * catches up with what the run recorded since.
+   * draws what it fetched, and catches up with what the run recorded since.
    */
   tiles(set: TileSet): Tiles {
     const key = JSON.stringify(set);
-    let tiles = this.#tiles.get(key);
-    if (tiles) { tiles.refresh(); return tiles; }
-    const fetch = async (url: string) => {
-      await this.#opened;
-      return this.#request<Uint8Array>({ kind: 'tile', set, path: url.slice(url.indexOf('/') + 1) });
-    };
-    tiles = new Tiles(plotDataset, `plot:${this.#tiles.size}/frames.json`, { fetch });
-    this.#tiles.set(key, tiles);
-    return tiles;
+    let state = this.#tiles.get(key);
+    if (!state) {
+      // A refresh renews the spans reaching past what the index listed, and drops any still on its way: it settles only once the
+      // index has landed, latkit has asked for those spans in its next frame, and they have landed too. The history behind them, as
+      // a new level of detail fills in, holds back no refresh.
+      const settle = () => requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (held.awaited) return;
+        held.refreshing = false;
+        this.#catchUp();
+      }));
+      const fetch = async (url: string) => {
+        const path = url.slice(url.indexOf('/') + 1), span = /^(\d+)\/(\d+)\.latk$/.exec(path), index = held.index;
+        const awaited = path === 'frames.json' || (!!span && !!index && (Number(span[2]) + 1) * index.chunk * 8 ** Number(span[1]) > index.rows);
+        if (awaited) held.awaited++;
+        try {
+          await this.#opened;
+          const bytes = await this.#request<Uint8Array>({ kind: 'tile', set, path });
+          if (path === 'frames.json') {
+            const { chunk, frames: [field] } = JSON.parse(new TextDecoder().decode(bytes)) as { chunk: number; frames: [{ frames: [number, number] }] };
+            held.index = { rows: field.frames[1], chunk };
+          }
+          return bytes;
+        } finally {
+          if (awaited) { held.awaited--; settle(); }
+        }
+      };
+      const held: TileState = { tiles: new Tiles(plotDataset, `plot:${this.#tiles.size}/frames.json`, { fetch }), awaited: 0, refreshing: false };
+      this.#tiles.set(key, state = held);
+    }
+    this.#shown = state;
+    this.#catchUp();
+    return state.tiles;
+  }
+  /** The run has recorded `rows`: the tiles shown fetch what they lack of them. */
+  recorded(rows: number) {
+    this.#rows = rows;
+    this.#catchUp();
+  }
+  /**
+   * Refreshes the tiles shown when their index lists fewer rows than the run has recorded: one refresh at a time, each once the
+   * spans the last renewed have landed. Tiles not drawn yet read the run as it is when they are.
+   */
+  #catchUp() {
+    const shown = this.#shown;
+    if (!shown?.index || shown.refreshing || shown.awaited || shown.index.rows >= this.#rows) return;
+    shown.refreshing = true;
+    shown.tiles.refresh();
   }
   /** Ends every feed; the worker lets the run's port go, then ends itself. */
   close(error: Error = new DOMException('The result worker closed.', 'AbortError')) {
@@ -119,5 +167,6 @@ export class RunResults {
     for (const pending of this.#pending.values()) pending.reject(error);
     this.#pending.clear();
     this.#tiles.clear();
+    this.#shown = undefined;
   }
 }

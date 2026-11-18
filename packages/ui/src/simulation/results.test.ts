@@ -259,6 +259,15 @@ it.each([1, 2])('writes spans latkit draws as the solver keeps level %i: extrema
   expect(queries).toEqual([{ columns: ['a', 'b'], level, first: 0, count: 65536, maxBytes: 16 * 65536 * 3 }]);
 });
 
+it('colors each series as its set says, or by its place', async () => {
+  const host = await hosting(readerOf({}));
+  for (const [series, colors] of [[undefined, [0, 1]], [[3, 0], [3, 0]]] as const) {
+    const data = await drawn(host, { ...set, columns: ['a', 'b'], ...series && { series } }, []);
+    try { expect(['a', 'b'].map(id => data.get('Trace', id, 'series'))).toEqual(colors); } finally { data.destroy(); }
+  }
+  host.close();
+});
+
 it('measures a trace from its reference in full precision, reading the reference once for its set', async () => {
   const pressure = 4885576.181472959, references: RowsQuery[] = [];
   const host = await hosting(readerOf({
