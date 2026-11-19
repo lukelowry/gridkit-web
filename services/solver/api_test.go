@@ -186,7 +186,7 @@ func codeOf(t *testing.T, response *http.Response) string {
 func TestRoutesOwnTheirMethodsAndNothingElse(t *testing.T) {
 	server := testService(t)
 	for path, status := range map[string]int{
-		"/":                  http.StatusNoContent,
+		"/":                  http.StatusOK,
 		"/missing":           http.StatusNotFound,
 		"/api/runs":          http.StatusNotFound,
 		"/runs":              http.StatusMethodNotAllowed,
@@ -236,9 +236,9 @@ func TestTheGateGuardsTheAPIButNotHealth(t *testing.T) {
 	}{
 		{"/health", nil, "anywhere.test", http.StatusNoContent},
 		{"/", map[string]string{"Authorization": "Bearer no"}, "localhost", http.StatusUnauthorized},
-		{"/", token, "localhost", http.StatusNoContent},
-		{"/", token, "[::1]:8080", http.StatusNoContent},
-		{"/", map[string]string{"Authorization": "Bearer secret", "Origin": "http://localhost:8080"}, "localhost:8080", http.StatusNoContent},
+		{"/", token, "localhost", http.StatusOK},
+		{"/", token, "[::1]:8080", http.StatusOK},
+		{"/", map[string]string{"Authorization": "Bearer secret", "Origin": "http://localhost:8080"}, "localhost:8080", http.StatusOK},
 		{"/", map[string]string{"Authorization": "Bearer secret", "Origin": "https://evil.test"}, "localhost:8080", http.StatusForbidden},
 		{"/runs/none", map[string]string{"Authorization": "Bearer secret", "Origin": "http://localhost:9"}, "localhost:8080", http.StatusForbidden},
 	} {
@@ -257,16 +257,16 @@ func TestARunRecordsAndServesWhatGridKitWrites(t *testing.T) {
 		t.Fatalf("%+v", status)
 	}
 
-	var rows RowsHeader
+	var rows PlanesHeader
 	values := answer(t, postJSON(t, address+"/rows", RowsQuery{Columns: []string{"Bus_1_Va"}, MaxBytes: 4096}), &rows)
 	if rows.State != "completed" || rows.Rows != 2 || rows.Count != 2 || len(values) != 4 || values[3] != 4 {
 		t.Fatalf("%+v %v", rows, values)
 	}
 
-	var summary SummaryHeader
-	answer(t, postJSON(t, address+"/summary", SummaryQuery{Columns: []string{"Bus_1_Vm"}, Resolution: 100, MaxBytes: 4096}), &summary)
-	if summary.State != "completed" || summary.Rows != 2 || !summary.Reset {
-		t.Errorf("%+v", summary)
+	var entries PlanesHeader
+	values = answer(t, postJSON(t, address+"/entries", EntriesQuery{Columns: []string{"Bus_1_Vm"}, Count: 8, MaxBytes: 4096}), &entries)
+	if entries.State != "completed" || entries.Count != 2 || len(values) != 4 || values[3] != 3 {
+		t.Errorf("%+v %v", entries, values)
 	}
 
 	download := func(name string) string {
@@ -395,6 +395,41 @@ func TestAnAbandonedUploadStartsNothingAndHoldsNothing(t *testing.T) {
 	}
 }
 
+func TestTheRootSaysWhatEngineRuns(t *testing.T) {
+	var engine map[string]string
+	getJSON(t, testService(t).URL+"/", http.StatusOK, &engine)
+	// Outside the image there is no versions.json.
+	if engine == nil || len(engine) != 0 {
+		t.Errorf("%+v", engine)
+	}
+}
+
+func TestARunNobodyFollowsGivesWayToTheNext(t *testing.T) {
+	fakeSolver(t, printed(recordingOf("t,a", 0, 1))+`; while [ ! -e "$PWD/done" ]; do sleep 0.01; done`)
+	// Set before the service starts; restored after it stops.
+	previous := unwatched
+	t.Cleanup(func() { unwatched = previous })
+	unwatched = 500 * time.Millisecond
+	server := testService(t)
+	first := started(t, server)
+	// A polled run refuses another.
+	statusOf(t, first)
+	if response := begin(t, server, `{}`, aModel); response.StatusCode != http.StatusConflict || codeOf(t, response) != "busy" {
+		t.Errorf("%d", response.StatusCode)
+	}
+	// Unpolled past unwatched, it is stopped and replaced.
+	time.Sleep(2 * unwatched)
+	second := started(t, server)
+	var failure Failure
+	getJSON(t, first, http.StatusGone, &failure)
+	if failure.Code != "expired" {
+		t.Errorf("%+v", failure)
+	}
+	if response := postJSON(t, second+"/cancel", nil); response.StatusCode != http.StatusNoContent {
+		t.Errorf("%d", response.StatusCode)
+	}
+}
+
 func TestStartingARunRetiresTheLast(t *testing.T) {
 	fakeSolver(t, printed(recordingOf("t,a", 0, 1)))
 	server := testService(t)
@@ -423,8 +458,8 @@ func TestCancellingKeepsAReadablePartialResult(t *testing.T) {
 	if status.State != "cancelled" || status.Rows != 2 {
 		t.Errorf("%+v", status)
 	}
-	var header SummaryHeader
-	answer(t, postJSON(t, address+"/summary", SummaryQuery{Columns: []string{"a"}, Resolution: 100, MaxBytes: 4096}), &header)
+	var header PlanesHeader
+	answer(t, postJSON(t, address+"/entries", EntriesQuery{Columns: []string{"a"}, Count: 2, MaxBytes: 4096}), &header)
 	if header.State != "cancelled" {
 		t.Errorf("%+v", header)
 	}
@@ -437,7 +472,7 @@ func TestMalformedQueriesAreTheClientsMistake(t *testing.T) {
 	finished(t, address)
 	for path, query := range map[string]any{
 		"/rows":    map[string]any{"columns": []string{"missing"}, "maxBytes": 64},
-		"/summary": map[string]any{"columns": [][]string{{"a"}}, "resolution": 1, "maxBytes": 4096},
+		"/entries": map[string]any{"columns": [][]string{{"a"}}, "count": 1, "maxBytes": 4096},
 	} {
 		if response := postJSON(t, address+path, query); response.StatusCode != http.StatusBadRequest || codeOf(t, response) != "invalid" {
 			t.Errorf("%s: %d", path, response.StatusCode)
@@ -466,7 +501,7 @@ func TestAWaitingReadWakesOnNewRowsAndStopsWithItsReader(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	began := time.Now()
-	var rows RowsHeader
+	var rows PlanesHeader
 	values := answer(t, postJSON(t, address+"/rows", RowsQuery{Columns: []string{"a"}, From: 1, Wait: true, MaxBytes: 4096}), &rows)
 	if rows.First != 1 || rows.Count != 1 || values[1] != 2 || time.Since(began) > 5*time.Second {
 		t.Fatalf("%+v %v after %v", rows, values, time.Since(began))

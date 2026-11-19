@@ -3,6 +3,7 @@
   import { applies, categories, preferenceFields, preferenceKeys } from '../preferences/definitions.js';
   import { createPreferences, type PreferencesState } from '../preferences/state.svelte.js';
   import { equal, type CaseDocument, type SavedViews } from '@gridkit/library';
+  import type { Engine } from '@gridkit/solver';
   import { watchNotice } from '../ui/toasts.svelte.js';
   import { errorMessage } from '../ui/errors.js';
   import Dialog from '../ui/Dialog.svelte';
@@ -12,9 +13,11 @@
   import type { Measure } from '../domain/measure.js';
   import { defaultMarks, mappingDraft } from '../domain/views.js';
   import MappingSettings from '../mappings/MappingSettings.svelte';
+  import AboutPanel from './AboutPanel.svelte';
 
-  let { preferences, document, mappings, onmappings, geographic, caseOpen, simulation = false, measure, band, initialPage = 'appearance', onpending, onclose }: {
+  let { preferences, document, mappings, onmappings, geographic, caseOpen, simulation = false, measure, band, engine, initialPage = 'appearance', onpending, onclose }: {
     preferences: PreferencesState; document: CaseDocument; mappings: SavedViews; onmappings: (value: SavedViews) => void; geographic: boolean; caseOpen: boolean; simulation?: boolean; measure?: Measure | undefined; band?: number | null | undefined;
+    engine: Engine;
     initialPage?: string;
     onpending: (pending: boolean) => void; onclose: () => void;
   } = $props();
@@ -57,17 +60,20 @@
   let notice = $state('');
   const words = $derived(query.trim().toLowerCase().split(/\s+/).filter(Boolean));
   const showingMappings = $derived(mappingPages.some(page => page.id === active) && !words.length);
+  const showingAbout = $derived(active === 'about' && !words.length);
+  const matchingAbout = $derived(words.length > 0 && words.every(word =>
+    'about software specifications version versions build gridkit web latkit svelte simulation engine sundials suitesparse'.includes(word)));
   // Dependent controls keep their place; availability follows the current settings.
   const shown = $derived(categories.map(category => ({
     ...category, keys: preferenceKeys.filter(key => {
       const item = preferenceFields[key];
-      const text = `${category.label} ${item.group} ${item.label} ${key} ${item.kind === 'color' ? 'colour palette opacity' : ''} ${key === 'motion' ? 'animation accessibility' : ''} ${key === 'geography' ? 'borders map' : ''}`.toLowerCase();
+      const text = `${category.label} ${item.group} ${item.label} ${key} ${item.kind === 'color' ? 'colour palette opacity' : ''} ${key === 'motion' ? 'animation accessibility' : ''} ${key === 'geography' ? 'borders map' : ''} ${key.startsWith('parallel') ? 'circuits lines' : ''} ${key.startsWith('flow') ? 'animation power' : ''}`.toLowerCase();
       return item.category === category.id && words.every(word => text.includes(word));
     }),
   })).filter(category => category.keys.length));
   const visible = $derived(words.length ? shown : shown.filter(category => category.id === active));
   const matchingPages = $derived(words.length ? mappingPages.filter(page => words.every(word => `${page.label} mappings`.toLowerCase().includes(word))) : []);
-  const found = $derived(shown.reduce((count, category) => count + category.keys.length, 0) + matchingPages.length);
+  const found = $derived(shown.reduce((count, category) => count + category.keys.length, 0) + matchingPages.length + Number(matchingAbout));
   function showPage(page: string) { active = page; query = ''; }
   async function reset(keys: Parameters<typeof draft.reset>[0], label: string, target: HTMLElement) {
     notice = '';
@@ -88,10 +94,11 @@
   <p class="sr-only" role="status">{notice}</p>
   <div class="property-layout">
     <div class="section-picker">
-      <Icon name={categories.find(category => category.id === active)?.icon ?? 'mappings'} />
+      <Icon name={categories.find(category => category.id === active)?.icon ?? (active === 'about' ? 'info' : 'mappings')} />
       <select aria-label="Settings section" value={active} onchange={event => showPage(event.currentTarget.value)}>
         <optgroup label="Settings">{#each categories as category (category.id)}<option value={category.id}>{category.label}</option>{/each}</optgroup>
         <optgroup label="Mappings">{#each mappingPages as page (page.id)}<option value={page.id}>{page.label} mappings</option>{/each}</optgroup>
+        <option value="about">About</option>
       </select>
     </div>
     <nav class="property-nav" aria-label="Preference categories">
@@ -108,7 +115,15 @@
             onclick={() => showPage(page.id)}><Icon name={page.icon} /><span>{page.label}</span></button>
         {/each}
       </div>
+      <div class="about-link">
+        <button class="category-link" aria-current={showingAbout ? 'true' : undefined}
+          onclick={() => showPage('about')}><Icon name="info" /><span>About</span></button>
+      </div>
     </nav>
+    {#if showingAbout}
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex (This read-only region needs focus for keyboard scrolling.) -->
+      <div class="property-list c-scroll-region" role="region" aria-label="Software specifications" tabindex="0"><AboutPanel {engine} /></div>
+    {/if}
     <div class="property-list c-scroll-region" hidden={!showingMappings}>
       <section aria-label="Network mappings">
         <div class="property-heading mapping-heading">
@@ -136,7 +151,10 @@
       </section>
     </div>
     {#key `${active}:${words.length > 0}`}
-      <div class="property-list c-scroll-region" hidden={showingMappings}>
+      <div class="property-list c-scroll-region" hidden={showingMappings || showingAbout}>
+          {#if matchingAbout}
+            <button class="mapping-result" onclick={() => showPage('about')}><Icon name="info" />About</button>
+          {/if}
           {#each matchingPages as page (page.id)}
             <button class="mapping-result" onclick={() => showPage(page.id)}><Icon name={page.icon} />{page.label} mappings</button>
           {/each}
@@ -167,15 +185,19 @@
               {/each}
             </section>
           {/each}
-          {#if !visible.length && !matchingPages.length}
+          {#if !visible.length && !matchingPages.length && !matchingAbout}
             <div class="preferences-empty"><p>No settings found.</p><button onclick={() => { query = ''; search?.focus(); }}>Clear search</button></div>
           {/if}
       </div>
     {/key}
   </div>
   {#snippet footer()}
-    <button type="button" onclick={onclose}>Cancel</button>
-    <button type="button" class="primary" title="Apply settings" disabled={!dirty || invalid} onclick={apply}>Apply</button>
+    {#if showingAbout && !dirty && !invalid}
+      <button type="button" onclick={onclose}>Close</button>
+    {:else}
+      <button type="button" onclick={onclose}>Cancel</button>
+      <button type="button" class="primary" title="Apply settings" disabled={!dirty || invalid} onclick={apply}>Apply</button>
+    {/if}
   {/snippet}
 </Dialog>
 
@@ -188,7 +210,7 @@
   .reset { width: var(--control-height); height: var(--control-height); min-height: var(--control-height); flex-shrink: 0; }
   .reset :global(svg) { width: 12px; height: 12px; }
   .preferences-empty { color: var(--color-text-2); padding-block: 16px; }
-  .mapping-links { margin-top: var(--spacing-md); padding-top: var(--spacing-sm); border-top: 1px solid var(--color-border); }
+  .mapping-links, .about-link { margin-top: var(--spacing-md); padding-top: var(--spacing-sm); border-top: 1px solid var(--color-border); }
   .group-label { display: block; padding: 0 8px 4px; color: var(--color-text-3); font: var(--type-caption); }
   .mapping-heading { flex-wrap: wrap; }
   .mapping-scope { display: flex; flex-wrap: wrap; gap: var(--spacing-md); font: var(--type-compact); }

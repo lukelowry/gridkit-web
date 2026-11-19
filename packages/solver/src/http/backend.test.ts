@@ -15,7 +15,7 @@ function frame(header: unknown, values = new Float64Array()) {
 function solver(answer: (path: string, init?: RequestInit) => unknown) {
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     const { pathname } = new URL(url, 'http://local');
-    const value = pathname === '/api/solver/' ? new Response(null, { status: 204 }) : await answer(pathname, init);
+    const value = pathname === '/api/solver/' ? Response.json({}) : await answer(pathname, init);
     return value instanceof Response ? value : Response.json(value);
   });
   vi.stubGlobal('fetch', fetch);
@@ -89,9 +89,35 @@ it('shows no progress until a row is recorded', async () => {
   expect(fetch.mock.calls.map(([url]) => url).filter(url => url.includes('?'))).toEqual(['/api/solver/runs/run?after=-1', '/api/solver/runs/run?after=1', '/api/solver/runs/run?after=2']);
 });
 
+it('asks again what a dropped connection or a gateway left unanswered, and follows the run to its end', async () => {
+  const statuses = [() => { throw new TypeError('Failed to fetch'); }, () => new Response(null, { status: 502 }),
+    () => ({ sequence: 1, state: 'running', rows: 3, range: [0, .2] }), () => new Response(null, { status: 504 }), () => completed];
+  const fetch = solver(path => path === '/api/solver/runs' ? { id: 'run' } : statuses.shift()!());
+  const states = [];
+  for await (const update of (await connected())!.start(request).updates()) states.push(update.state);
+  expect(states.slice(-2)).toEqual(['running', 'completed']);
+  // A lost poll is retried from the last sequence it saw.
+  expect(fetch.mock.calls.map(([url]) => url).filter(url => url.includes('?')))
+    .toEqual(['/api/solver/runs/run?after=-1', '/api/solver/runs/run?after=-1', '/api/solver/runs/run?after=-1', '/api/solver/runs/run?after=1', '/api/solver/runs/run?after=1']);
+});
+
+it('tells what the service itself answers at once, and never sends a study twice', async () => {
+  const fetch = solver(path => path === '/api/solver/runs' ? Response.json({ code: 'busy', message: 'A simulation is already active.' }, { status: 409 })
+    : Response.json({ code: 'expired', message: 'This simulation has expired.' }, { status: 410 }));
+  const run = (await connected())!.start(request);
+  const observe = async () => { for await (const _update of run.updates()) { /* Until it fails. */ } };
+  await expect(observe()).rejects.toMatchObject({ code: 'busy' });
+  expect(fetch.mock.calls.map(([url]) => url)).toEqual(['/api/solver/', '/api/solver/runs']);
+});
+
+it('says what engine the service runs', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ GridKit: 'develop @ 1e754cd' })));
+  expect((await connected())!.engine).toEqual({ GridKit: 'develop @ 1e754cd' });
+});
+
 it('abandons an upload still going, leaving nothing to stop', async () => {
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
-    if (url === '/api/solver/') return new Response(null, { status: 204 });
+    if (url === '/api/solver/') return Response.json({});
     return new Promise<Response>((_, reject) => init!.signal!.addEventListener('abort', () => reject(init!.signal!.reason)));
   });
   vi.stubGlobal('fetch', fetch);
@@ -129,7 +155,7 @@ it('reads beneath the run\'s address what it was asked, and says what the servic
       asked = JSON.parse(init!.body as string);
       return new Response(frame({ rows: 7, state: 'completed', range: [0, 1], first: 5, count: 2 }, Float64Array.of(0, 1, 10, 11)));
     }
-    if (path === '/api/solver/runs/run/summary') return Response.json({ code: 'expired', message: 'This simulation has expired.' }, { status: 410 });
+    if (path === '/api/solver/runs/run/entries') return Response.json({ code: 'expired', message: 'This simulation has expired.' }, { status: 410 });
     return completed;
   });
   const run = (await connected())!.start(request);
@@ -138,6 +164,6 @@ it('reads beneath the run\'s address what it was asked, and says what the servic
   const { samples } = await reader.rows({ columns: ['v'], from: 5, every: 2, wait: true, maxBytes: 64 });
   expect(asked).toEqual({ columns: ['v'], from: 5, every: 2, wait: true, maxBytes: 64 });
   expect({ first: samples.first, times: [...samples.times], values: [...samples.values] }).toEqual({ first: 5, times: [0, 1], values: [10, 11] });
-  await expect(reader.summary({ columns: ['v'], range: null, resolution: 10, maxBytes: 4096 })).rejects.toMatchObject({ code: 'expired', message: 'This simulation has expired.' });
+  await expect(reader.entries({ columns: ['v'], level: 0, first: 0, count: 1, maxBytes: 4096 })).rejects.toMatchObject({ code: 'expired', message: 'This simulation has expired.' });
   reader.close();
 });

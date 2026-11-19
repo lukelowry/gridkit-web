@@ -4,9 +4,8 @@
   import type { FieldInfo } from '@gridkit/library';
   import { errorMessage } from '../ui/errors.js';
   import { sampledName } from '../simulation/sampled.js';
-  import { defaultBand, fieldOf, measureOf, percentable, type Basis } from '../domain/measure.js';
+  import { defaultBand, fieldOf, flowReach, measureOf, percentable, type Basis } from '../domain/measure.js';
   import { colorHex } from '../ui/color.js';
-  import Icon from '../ui/Icon.svelte';
   import IconToggles from '../ui/IconToggles.svelte';
   import Popover from '../ui/Popover.svelte';
   import { voltagePalette } from './defaults.js';
@@ -78,10 +77,16 @@
     if (next === 'formula') { formula = JSON.stringify(value === undefined ? inherited ?? null : value, null, 2); ondraft({}); }
     else if (next === 'default') { apply({ kind: 'inherit' }); popover?.close(); }
     else if (next === 'off') { apply({ kind: 'off' }); popover?.close(); }
-    else if (next === 'fixed') { if (own.kind !== 'fixed') apply({ kind: 'fixed', value: control === 'color' ? '#808080' : range[0] }); }
+    else if (next === 'fixed') { if (own.kind !== 'fixed') apply({ kind: 'fixed', value: control === 'color' ? '#808080' : control === 'speed' ? range[1] : range[0] }); }
     else if (control === 'label') apply({ kind: 'field', field: next, ...own.kind === 'field' && own.maxWidth !== undefined ? { maxWidth: own.maxWidth } : {} });
     else if (control === 'color') apply({ kind: 'colormap', field: next, colormap: own.kind === 'colormap' ? own.colormap : 'viridis' });
+    else if (control === 'speed') apply({ kind: 'scale', field: next, scale: own.kind === 'scale' ? own.scale : [range[0], range[1]], domain: reachOf(next) });
     else apply({ kind: 'scale', field: next, scale: own.kind === 'scale' ? own.scale : [range[0], range[1]] });
+  }
+  /** Where `field` moves comets at full speed, either way: a recorded output as it reaches, any other field 1. */
+  function reachOf(field: string): [number, number] {
+    const { output, basis } = measureOf(field), reach = flowReach({ output: sampledName(output) ?? output, basis });
+    return [-reach, reach];
   }
   /** Reads `next` of its output, on its automatic range; a deviation starts on a diverging map, so no change is its middle. */
   function setBasis(next: Basis) {
@@ -92,7 +97,8 @@
       apply({ ...rest, field, ...next !== 'value' && !diverges(mapped.colormap) ? { colormap: 'rdbu' as const } : {} });
     } else if (mapped.kind === 'scale') {
       const { domain: _, ...rest } = mapped;
-      apply({ ...rest, field });
+      // A speed keeps no change still: it reaches as far either way as the new measure does.
+      apply({ ...rest, field, ...control === 'speed' ? { domain: reachOf(field) } : {} });
     } else apply({ ...mapped, field });
   }
   const scaled = $derived(own.kind === 'scale' ? own : null);
@@ -133,7 +139,6 @@
             {:else if fixedColor(shown)}<i class="c-ramp" style:background={fixedColor(shown)}></i>{/if}
             <span>{own.kind === 'inherit' ? 'Default' : summary(own)}{reach ? ` ${reach}` : ''}</span>
           </span>
-          <Icon name="chevron" />
         </button>
       {/snippet}
       {#snippet children()}
@@ -178,6 +183,27 @@
                     {/each}
                   </div>
                 {/if}
+                {#if control === 'speed' && mapped}
+                  <!-- Either way at once: the field at ±its range moves at ±the speed, and no value moves nothing. -->
+                  <div class="line"><span class="property-label">Speed</span>
+                    <span class="c-field"><span class="c-field__suffix">±</span>
+                      <input aria-label={`${label} speed`} aria-invalid={!!draft?.error || undefined} aria-describedby={draft?.error ? `${id}-error` : undefined} type="number" min="0" step="any" value={texts.speed ?? (scaled ? String(scaled.scale[1]) : '')}
+                        oninput={event => typed('speed', event.currentTarget.value, speed => {
+                          if (speed < 0) throw new Error('Enter a speed of at least 0.');
+                          return { kind: 'scale', field: mapped!.field, scale: [-speed, speed], domain: domainPair ?? reachOf(mapped!.field) };
+                        }, 'the speed')} />
+                    </span>
+                  </div>
+                  <div class="line"><span class="property-label">Range</span>
+                    <span class="c-field"><span class="c-field__suffix">±</span>
+                      <input aria-label={`${label} range`} aria-invalid={!!draft?.error || undefined} aria-describedby={draft?.error ? `${id}-error` : undefined} type="number" min="0" step="any" value={texts.reach ?? (domainPair ? String(domainPair[1]) : '')}
+                        oninput={event => typed('reach', event.currentTarget.value, reach => {
+                          if (!(reach > 0)) throw new Error('Enter a range greater than 0.');
+                          return { kind: 'scale', field: mapped!.field, scale: scaled?.scale ?? [range[0], range[1]], domain: [-reach, reach] };
+                        }, 'the range')} />
+                    </span>
+                  </div>
+                {/if}
                 {#if control === 'number' && mapped}
                   <div class="line"><span class="property-label">Output</span>
                     <div class="pair">
@@ -188,7 +214,7 @@
                     </div>
                   </div>
                 {/if}
-                {#if ranged}
+                {#if ranged && control !== 'speed'}
                   <div class="line"><span class="property-label">Range</span>
                     {#if deviating}
                       <span class="c-field"><span class="c-field__suffix">±</span>

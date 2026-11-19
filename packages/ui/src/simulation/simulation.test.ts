@@ -5,9 +5,9 @@ import ieee39 from '../../../../library/IEEE39.case.json';
 import wecc240 from '../../../../library/WECC240.case.json';
 import { CaseDocument, parseCase } from '@gridkit/library';
 import { referenceField } from '../domain/measure.js';
-import type { Progress, ResultReader, RowsQuery, RunState, RunUpdate, Solver, SummaryQuery, SummaryReply } from '@gridkit/solver';
+import type { Progress, ResultReader, RowsQuery, RunState, RunUpdate, Solver } from '@gridkit/solver';
 import { Connection } from '../services/connection.svelte.js';
-import type { ResultsMessage, ResultsReply } from './results.js';
+import { RunResults, type ResultsMessage, type ResultsReply } from './results.js';
 import { ResultHost, transferOf } from './results.worker.js';
 import { Simulation } from './simulation.svelte.js';
 import { defaultStudy } from '@gridkit/library/gridkit';
@@ -15,7 +15,7 @@ import * as gridkit from '@gridkit/library/gridkit';
 import { latkit } from '../ui/latkit.js';
 import { RunSession } from './run.svelte.js';
 
-const workers: { plotFeeds: number; reader?: ResultReader } = { plotFeeds: 0 };
+const workers: { reader?: ResultReader } = {};
 vi.mock('../ui/latkit.js', () => ({ latkit: vi.fn(async () => ({})) }));
 // Exercise the real facade and host together, including transferable detachment.
 class WorkerStub {
@@ -24,7 +24,6 @@ class WorkerStub {
   closed = false;
   async postMessage(message: ResultsMessage) {
     if (message.kind === 'close') { this.terminate(); return; }
-    if (message.kind === 'follow' && message.request.kind === 'plot') workers.plotFeeds++;
     try {
       const value = await this.host.handle(message);
       if (!this.closed) this.onmessage?.({ data: { id: message.id, value: structuredClone(value, { transfer: transferOf(value) }) } });
@@ -44,8 +43,8 @@ it('reports compilation failure while GPU initialization is still pending', asyn
   vi.mocked(latkit).mockImplementationOnce(() => new Promise(() => {}));
   vi.spyOn(gridkit, 'compile').mockImplementationOnce(() => { throw new Error('Case cannot be compiled'); });
   const start = vi.fn(() => { throw new Error('Unexpected solver start'); });
-  const run = new RunSession({ start, close() {} }, new CaseDocument(parseCase(JSON.stringify(ieee39))),
-    0, defaultStudy(), { basis: 'value', band: null, speed: 1 });
+  const run = new RunSession({ engine: {}, start, close() {} }, new CaseDocument(parseCase(JSON.stringify(ieee39))),
+    0, defaultStudy(), [], { basis: 'value', band: null, speed: 1 });
   try {
     await vi.waitFor(() => expect(run.error).toBe('Case cannot be compiled'));
     expect(run.failed).toBe(true);
@@ -58,14 +57,28 @@ it('ignores a late GPU initialization failure after the run is closed', async ()
   let reject!: (error: Error) => void;
   vi.mocked(latkit).mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; }));
   const start = vi.fn(() => { throw new Error('Unexpected solver start'); });
-  const run = new RunSession({ start, close() {} }, new CaseDocument(parseCase(JSON.stringify(ieee39))),
-    0, defaultStudy(), { basis: 'value', band: null, speed: 1 });
+  const run = new RunSession({ engine: {}, start, close() {} }, new CaseDocument(parseCase(JSON.stringify(ieee39))),
+    0, defaultStudy(), [], { basis: 'value', band: null, speed: 1 });
   run.close();
   reject(new Error('GPU initialization failed'));
   await new Promise(resolve => setTimeout(resolve, 0));
   expect(run.error).toBe('');
   expect(run.busy).toBe(false);
   expect(start).not.toHaveBeenCalled();
+});
+
+it('asks a run it can no longer hear to stop, so it does not hold the solver', async () => {
+  vi.stubGlobal('Worker', WorkerStub);
+  const cancel = vi.fn(async () => {});
+  const client: Solver = { engine: {}, close() {}, start: () => ({ cancel, results: async () => new MessageChannel().port1, artifacts: Promise.resolve([]),
+    async *updates() { yield { state: 'running', progress: null }; throw new Error('Failed to fetch'); } }) };
+  const run = new RunSession(client, new CaseDocument(parseCase(JSON.stringify(ieee39))), 0, defaultStudy(), [], { basis: 'value', band: null, speed: 1 });
+  try {
+    await vi.waitFor(() => expect(run.failed).toBe(true));
+    expect(run.error).toBe('Failed to fetch');
+    expect(run.busy).toBe(false);
+    expect(cancel).toHaveBeenCalledOnce();
+  } finally { run.close(); }
 });
 
 function inbox<T>(signal: AbortSignal) {
@@ -96,7 +109,6 @@ async function setup(fixture: unknown) {
   vi.stubGlobal('requestAnimationFrame', () => 1); vi.stubGlobal('cancelAnimationFrame', () => {});
   let now = 0, value = 1, state: RunState = 'running';
   vi.spyOn(performance, 'now').mockImplementation(() => now);
-  workers.plotFeeds = 0;
   const document = new CaseDocument(parseCase(JSON.stringify(fixture)));
   // What the run has recorded: a row per time, and those waiting for more.
   const times = [0, 1], waiting = new Set<() => void>();
@@ -117,20 +129,12 @@ async function setup(fixture: unknown) {
     const held = times.slice(from);
     return { ...revision(), samples: { kind: 'samples' as const, first: from, columns: query.columns, times: Float64Array.from(held), values: new Float64Array(held.length * query.columns.length).fill(value) } };
   });
-  const summaries: SummaryQuery[] = [];
-  const summary = vi.fn(async (query: SummaryQuery, signal: AbortSignal): Promise<SummaryReply> => {
-    summaries.push(query);
-    if (query.after !== undefined) await grown(signal, () => times.length > query.after! || ended());
-    const held = times.slice(), filled = value;
-    const description = { target: 'edge' as const, kind: 'samples' as const, level: 0, first: 0, rows: held.length };
-    return { ...revision(), reset: !query.cursor, cursor: { level: 0, first: 0, sealed: 0 }, tiles: [description], async *pages() {
-      yield { target: 'edge', level: 0, first: 0, block: { kind: 'samples', first: 0, columns: query.columns, times: Float64Array.from(held), values: new Float64Array(held.length * query.columns.length).fill(filled) } };
-    } };
-  });
-  workers.reader = { rows, summary, close() {} };
+  // The plot's tiles are read only as a view draws them, and no view draws here.
+  workers.reader = { rows, entries: async () => { throw new Error('Unexpected entries.'); }, close() {} };
   let progress: Progress = { rows: times.length, range: [0, 1] };
   let watch: ReturnType<typeof inbox<RunUpdate>>;
   const client: Solver = {
+    engine: {},
     start: () => ({ cancel: async () => {},
       results: async () => new MessageChannel().port1, artifacts: Promise.resolve([]),
       async *updates(signal) { watch = inbox(signal!); yield { state: 'running', progress }; yield* watch; },
@@ -141,11 +145,11 @@ async function setup(fixture: unknown) {
   await solver.connect();
   const simulation = new Simulation(solver);
   const study = { ...defaultStudy(), tmax: 20 };
-  const runs = [simulation.start(document, 0, study)];
+  const runs = [simulation.start(document, 0, study, [])];
   cleanup = async () => { simulation.close(); await Promise.all(runs); };
   await vi.waitFor(() => expect(simulation.run!.plot).toBeDefined());
   return {
-    simulation, study, rows, summaries, rowsCalls: () => rows.mock.calls.length,
+    simulation, study, rows, rowsCalls: () => rows.mock.calls.length,
     advance(time: number, next: number, nextValue = value, nextState: RunUpdate['state'] & RunState = 'running') {
       now = time; value = nextValue; state = nextState;
       times.push(next);
@@ -153,7 +157,7 @@ async function setup(fixture: unknown) {
       watch.send(nextState === 'failed' ? { state: nextState, progress, error: { code: 'test', message: 'Stopped' } } : { state: nextState, progress } as RunUpdate);
       for (const wake of [...waiting]) wake();
     },
-    restart() { simulation.close(); study.tmax = 5; runs.push(simulation.start(document, 1, study)); },
+    restart() { simulation.close(); study.tmax = 5; runs.push(simulation.start(document, 1, study, [])); },
   };
 }
 
@@ -201,7 +205,7 @@ for (const fixture of [ieee39, wecc240]) {
     }
     await new Promise(resolve => setTimeout(resolve, 60));
     expect(rowsCalls()).toBe(asked);
-    expect(run.data!.get('buses', simulationRow(run), 'Vm', { at: 2 })).toBe(1);
+    expect(run.data!.get('Bus', simulationRow(run), 'Vm', { at: 2 })).toBe(1);
     expect(run.live).toBe(false);
   });
 
@@ -209,20 +213,20 @@ for (const fixture of [ieee39, wecc240]) {
     const { simulation, advance, rows } = await setup(fixture);
     const run = simulation.run!, id = simulationRow(run), from = referenceField('Vm');
     // Without a reference, deviations are measured from the first sample.
-    await vi.waitFor(() => expect(run.data!.get('buses', id, from)).toBe(1));
+    await vi.waitFor(() => expect(run.data!.get('Bus', id, from)).toBe(1));
     advance(100, 2, 3);
     await vi.waitFor(() => expect(run.data!.describe().span?.[1]).toBe(2));
     const restarts = () => rows.mock.calls.filter(([query]) => query.at === undefined && !query.from).length, before = restarts();
     run.measure('change', 2);
-    expect(run.data!.get('buses', id, from)).toBe(3);
+    expect(run.data!.get('Bus', id, from)).toBe(3);
     run.measure('change', null);
-    expect(run.data!.get('buses', id, from)).toBe(1);
+    expect(run.data!.get('Bus', id, from)).toBe(1);
     expect(restarts()).toBe(before);
   });
 
-  it(`${fixture.header.case_name}: preserves manual framing, leaves the values to latkit's fit, and reuses its plot feed's worker`, async () => {
-    const { simulation, study, advance, summaries } = await setup(fixture);
-    const run = simulation.run!, camera = run.plot!.camera;
+  it(`${fixture.header.case_name}: preserves manual framing, leaves the values to latkit's fit, and keeps each measure's tiles`, async () => {
+    const { simulation, study, advance } = await setup(fixture);
+    const run = simulation.run!, camera = run.plot!.camera, tiles = run.plot!.source;
     // Streaming adds samples and never commands the camera: latkit fits the values in view.
     expect(camera.y).toBeNull();
     advance(50, 2, 2);
@@ -232,30 +236,25 @@ for (const fixture of [ieee39, wecc240]) {
     expect(run.plot!.camera).toBe(camera);
     expect(run.plot!.camera.x).toEqual([0, 20]);
 
-    // A Y-only gesture locks Y immediately, without a redundant subscription.
-    const version = run.plot!.camera.version, opened = workers.plotFeeds;
-    run.viewport({ x: [0, 20], y: [0.9, 1.1] }, 800, true);
-    const manual = run.plot!.camera;
+    // A gesture's camera is remembered for a plot drawn again: it commands nothing, and latkit fetches what the window shows.
+    run.viewport({ x: [0, 20], y: [0.9, 1.1] });
     advance(500, 5, 3);
     await vi.waitFor(() => expect(run.range[1]).toBe(5));
-    expect(run.plot!.camera).toBe(manual);
-    expect(manual.version).toBe(version);
-    await new Promise(resolve => setTimeout(resolve, 120));
-    expect(workers.plotFeeds).toBe(opened);
-
-    run.viewport({ x: [1, 2], y: [0.8, 1.2] }, 1000, true);
-    await vi.waitFor(() => expect(summaries.at(-1)!.range).toEqual([1, 2]));
-    expect(summaries.at(-1)!.cursor).toBeNull();
-    const zoomed = run.plot!.camera;
+    expect(run.plotOpening).toEqual({ x: [0, 20], y: [0.9, 1.1] });
+    run.viewport({ x: [1, 2], y: [0.8, 1.2] });
     run.seek(99);
     expect(run.playhead.time).toBe(5);
     run.follow();
     expect(run.live).toBe(true);
-    expect(run.plot!.camera).toBe(zoomed);
+    expect(run.plot!.camera).toBe(camera);
+    expect(run.plot!.source).toBe(tiles);
+    expect(run.plotOpening).toEqual({ x: [1, 2], y: [0.8, 1.2] });
 
     const angle = run.quantities.find(quantity => quantity.output === 'Va')!;
     run.select(angle.key);
     await vi.waitFor(() => expect(run.plot!.quantity).toBe(angle));
+    const angles = run.plot!.source;
+    expect(angles).not.toBe(tiles);
     // A new quantity unpins the values, keeping the times.
     expect(run.plot!.camera).toMatchObject({ x: [1, 2], y: null });
     run.fit();
@@ -276,13 +275,53 @@ for (const fixture of [ieee39, wecc240]) {
     run.sample([{ collection: 'buses', field: 'Va~change' }]);
     await vi.waitFor(() => expect(run.sampledFields.some(field => field.field === 'Va')).toBe(true));
     expect(run.sampledFields.some(field => field.field === 'Vm')).toBe(false);
+    expect(run.data!.get('Bus', simulationRow(run), 'Vm')).toBeNull();
+    // A measure shown again draws the tiles it fetched.
     run.measure('value', null);
+    expect(run.plot!.source).toBe(angles);
 
     // The submitted output interval sets what is held, even after settings are edited.
     study.dt_monitor = 1;
     expect(run.timeline).toEqual([0, 20]);
   });
 }
+
+it('runs a study where the browser has no device to draw with: its data loads before a device is asked for', async () => {
+  vi.mocked(latkit).mockImplementationOnce(async () => { throw Object.assign(new Error('This browser has no WebGL2.'), { code: 'unsupported' }); });
+  const { simulation } = await setup(ieee39), run = simulation.run!;
+  expect(run.error).toBe('');
+  expect(run.failed).toBe(false);
+  await vi.waitFor(() => expect(run.data!.get('Bus', simulationRow(run), 'Vm', { at: 1 })).toBe(1));
+});
+
+it('plots every series of a large quantity, narrows to selected and pinned elements when asked, and keeps network playback independent', async () => {
+  const value = { ...ieee39, buses: [...ieee39.buses, ...Array.from({ length: 513 - ieee39.buses.length }, (_, i) => ({ ...ieee39.buses[0]!, number: 10_000 + i }))] };
+  const { simulation } = await setup(value), run = simulation.run!;
+  const [first, second] = run.quantity!.channels, sets = vi.spyOn(RunResults.prototype, 'tiles'), colors = () => sets.mock.calls.at(-1)![0].series;
+  expect(run.plotMode).toBe('all');
+  expect(run.plot!.quantity.channels).toHaveLength(513);
+  run.setPlotMode('focused');
+  expect(run.plot).toBeUndefined();
+  run.focusPlot(first!.element);
+  await vi.waitFor(() => expect(run.plot?.quantity.channels).toEqual([first]));
+  run.pinPlot(first!.element);
+  run.focusPlot(second!.element);
+  await vi.waitFor(() => expect(run.plot?.quantity.channels).toEqual([first, second]));
+  expect(colors()).toEqual([0, 1]);
+  // A pinned element keeps its color as others are unpinned.
+  run.pinPlot(second!.element);
+  run.unpinPlot(first!.element);
+  await vi.waitFor(() => expect(run.plot?.quantity.channels).toEqual([second]));
+  expect(colors()).toEqual([1]);
+  run.unpinPlot(second!.element);
+  run.focusPlot(null);
+  expect(run.plot).toBeUndefined();
+  run.setPlotMode('all');
+  await vi.waitFor(() => expect(run.plot?.quantity.channels).toHaveLength(513));
+  await vi.waitFor(() => expect(run.data!.get('Bus', first!.element.id, 'Vm', { at: 1 })).toBe(1));
+  run.seek(0.5);
+  expect(run.playhead.time).toBe(0.5);
+});
 
 function simulationRow(run: { channels: readonly { output: string; element: { id: string } }[] }) {
   return run.channels.find(channel => channel.output === 'Vm')!.element.id;

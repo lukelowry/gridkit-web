@@ -1,16 +1,16 @@
-import { SolverError, type ArtifactName, type RunId } from '../index.js';
+import { SolverError, type ArtifactName, type Engine, type RunId } from '../index.js';
 import type { Backend, Report } from '../serve.js';
 import { settingsOf } from './gridkit.js';
 import { Host, type HostDeps } from './host.js';
 
-/** What the in-page solver runs on: files for each run, and GridKit for each study. */
-export type Side = Omit<HostDeps, 'status'>;
+/** What the in-page solver runs on: run files, GridKit, and its versions. */
+export type Side = Omit<HostDeps, 'status'> & { readonly engine: Engine };
 
 /**
  * GridKit in this page as a solver's backend: one run at a time, its rows kept in `side`'s files and read back as the solver
  * service reads them. Its log and settings are links the browser downloads; its recording is written as CSV only when asked.
  */
-export function wasmBackend(side: Side, report: Report): Backend {
+export function wasmBackend({ engine, ...side }: Side, report: Report): Backend {
   /** What each run held offers besides its recording, and the links made of it, released with the run. */
   const held = new Map<RunId, { settings: string; log?: string; links: string[] }>();
   const host = new Host({ ...side, status(run, status, log) {
@@ -30,6 +30,7 @@ export function wasmBackend(side: Side, report: Report): Backend {
     return href;
   };
   return {
+    engine,
     async start(run, { study, model }) {
       const settings = settingsOf(study, 'model.json', '/run/rows');
       held.set(run, { settings: JSON.stringify(settings, null, 2), links: [] });
@@ -40,7 +41,7 @@ export function wasmBackend(side: Side, report: Report): Backend {
     },
     cancel: run => host.cancel(run),
     rows: (run, query) => host.rows(run, query),
-    summary: (run, query) => host.summary(run, query),
+    entries: (run, query) => host.entries(run, query),
     async artifact(run, name) {
       return name === 'results' ? { header: {}, parts: host.csv(run) } : { header: { href: link(run, name) }, parts: [] };
     },

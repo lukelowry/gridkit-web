@@ -39,6 +39,7 @@ export class NetworkHost {
   #active = false;
   #disposed = false;
   #generation = 0;
+  #opening: AbortController | undefined;
 
   constructor(private source: NetworkSource) {}
 
@@ -77,7 +78,8 @@ export class NetworkHost {
     const input = this.source.scene(), before = opened.input;
     opened.draw(this.source.extra());
     try {
-      if (opened.show(input) && before && spaceOf(before.scene) !== spaceOf(input.scene)) this.fit();
+      opened.show(input);
+      if (before && spaceOf(before.scene) !== spaceOf(input.scene)) this.fit();
       this.fault = '';
     } catch (error) { this.fault = errorMessage(error, 'Rendering is unavailable.'); }
   }
@@ -99,6 +101,7 @@ export class NetworkHost {
   retry(canvas: HTMLCanvasElement | undefined) {
     if (this.stopped || this.#disposed || !canvas) return;
     this.#generation++;
+    this.#opening?.abort();
     this.#starting = false;
     this.#settling = undefined;
     this.opened?.destroy();
@@ -113,6 +116,7 @@ export class NetworkHost {
     if (this.opened) { this.#settle(); return; }
     if (this.#disposed || this.stopped || this.#starting || !canvas) return;
     this.#starting = true;
+    const abort = this.#opening = new AbortController();
     const generation = this.#generation;
     const current = () => !this.#disposed && !this.stopped && generation === this.#generation;
     let opened: CaseView | undefined;
@@ -124,7 +128,7 @@ export class NetworkHost {
       if (!current()) return;
       opened = new CaseView(this.source.document());
       const pitch = this.source.pitch();
-      await opened.open(canvas, this.source.scene(), { ...pitch ? { camera: { pitch } } : {}, extra: this.source.extra() });
+      await opened.open(canvas, this.source.scene(), { ...pitch ? { camera: { pitch } } : {}, extra: this.source.extra(), signal: abort.signal });
       if (!current()) { opened.destroy(); return; }
       this.#listen(opened);
       this.source.listen(opened);
@@ -138,6 +142,7 @@ export class NetworkHost {
       opened?.destroy();
       if (current()) this.#fail(error);
     } finally {
+      if (this.#opening === abort) this.#opening = undefined;
       if (generation === this.#generation) this.#starting = false;
     }
   }
@@ -166,6 +171,7 @@ export class NetworkHost {
   }
   destroy() {
     this.#disposed = true;
+    this.#opening?.abort();
     this.opened?.destroy();
   }
 }

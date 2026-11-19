@@ -778,20 +778,6 @@
       "family": "Machine",
       "params": [
         {
-          "id": "p0",
-          "type": "real",
-          "unit": "p.u.",
-          "default": 1,
-          "required": false
-        },
-        {
-          "id": "q0",
-          "type": "real",
-          "unit": "p.u.",
-          "default": 0,
-          "required": false
-        },
-        {
           "id": "H",
           "type": "real",
           "unit": "s",

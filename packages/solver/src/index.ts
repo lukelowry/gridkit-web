@@ -14,7 +14,11 @@ export type RunId = string;
 /** A study for GridKit: its settings and its native model, compiled by whoever asks. The solver chooses where its files go. */
 export interface RunRequest { readonly study: object; readonly model: Blob }
 
+/** Versions of the solver's GridKit build, by component; empty if unknown. */
+export type Engine = Readonly<Record<string, string>>;
+
 export interface Solver {
+  readonly engine: Engine;
   /** Starts a study and answers at once; the upload, or the start, happens behind it. */
   start(request: RunRequest): Run;
   /** Stops the solver, ending every run it follows and what it holds. */
@@ -72,7 +76,7 @@ export type Artifact = { readonly name: ArtifactName; readonly file: typeof arti
 /** A run's results, read through its port. */
 export interface ResultReader {
   rows(query: RowsQuery, signal?: AbortSignal): Promise<RowsReply>;
-  summary(query: SummaryQuery, signal?: AbortSignal): Promise<SummaryReply>;
+  entries(query: EntriesQuery, signal?: AbortSignal): Promise<EntriesReply>;
   /** Ends the reader and its port. */
   close(): void;
 }
@@ -104,8 +108,7 @@ export interface Envelope {
   readonly columns: readonly string[];
   readonly starts: Float64Array;
   readonly ends: Float64Array;
-  /** Bucket-major within each plane. Paired NaN values mark a bucket containing a gap; finer reads recover its finite
-   * neighbours without inventing bridges. */
+  /** Bucket-major within each plane. Paired NaN values mark a bucket containing a gap, which is never bridged. */
   readonly minimum: Float64Array;
   readonly maximum: Float64Array;
 }
@@ -118,41 +121,20 @@ export interface Revision {
 }
 export interface RowsReply extends Revision { readonly samples: Samples }
 
-/** The history a reader holds: `sealed` rows, from `first`, at one level of detail. */
-export interface Cursor { readonly level: number; readonly first: number; readonly sealed: number }
-export interface SummaryQuery {
+/**
+ * Entries of one level of detail, by absolute index: rows at level 0, and above it buckets of 8^level rows, each the least and
+ * greatest of its rows. Above level 0, whole buckets only: latkit reads the rows past a level's last whole bucket from the levels
+ * below.
+ */
+export interface EntriesQuery {
   readonly columns: readonly string[];
-  /** The times to cover, or all of them. */
-  readonly range: TimeRange | null;
-  /** Horizontal resolution in physical pixels: coarse buckets span at most one. Independent of maxBytes, which bounds each tile. */
-  readonly resolution: number;
+  readonly level: number;
+  readonly first: number;
+  readonly count: number;
+  /** The largest numeric payload of the reply. */
   readonly maxBytes: number;
-  readonly cursor?: Cursor | null;
-  /** Hold until the recording has more than this many rows, or the run ends. */
-  readonly after?: number;
 }
-/** A run of native entries. Above level 0 an entry spans 8^level rows. */
-export interface TileDescription {
-  /** History extends what a reader holds; an edge replaces what it held around that. */
-  readonly target: 'history' | 'edge';
-  readonly kind: 'samples' | 'envelope';
-  readonly level: number;
-  readonly first: number;
-  readonly rows: number;
-}
-export interface Tile {
-  readonly target: TileDescription['target'];
-  readonly level: number;
-  readonly first: number;
-  readonly block: Samples | Envelope;
-}
-/** One whole update of a summary: its plan at once, then its tiles as they arrive. */
-export interface SummaryReply extends Revision {
-  readonly reset: boolean;
-  readonly cursor: Cursor;
-  readonly tiles: readonly TileDescription[];
-  pages(): AsyncGenerator<Tile>;
-}
+export interface EntriesReply extends Revision { readonly block: Samples | Envelope }
 
 /** A reader of the run whose port `port` is (Run.results), in any thread, whatever solver serves it. */
 export const openReader: (port: MessagePort) => ResultReader = reader;

@@ -3,8 +3,10 @@ import { Data, field, type Fields } from 'latkit';
 import type { TimeRange } from '@gridkit/solver';
 import { measureOf, referenceField } from '../domain/measure.js';
 import { matchesField, simulationDataset, type SampledField } from './sampled.js';
-import { Pace } from './plot.js';
+import { Pace } from '../ui/pace.js';
 import { Feed, type RunResults } from './results.js';
+import { networkPlan, recordingStride, recordingTable } from './recording-plan.js';
+import { RecordingBuffer } from './recording-buffer.js';
 
 const packetBytes = 2 * 1024 * 1024;
 /** What the network holds of a run, in values drawn; a run past this keeps every Nth row. */
@@ -33,6 +35,7 @@ export class Recording {
   #reference: number | null = null;
   /** The time the installed references were read at. */
   #referred: number | undefined;
+  #referenceVersion = 0;
   #feed = new Feed();
 
   constructor(private options: RecordingOptions) {}
@@ -54,6 +57,7 @@ export class Recording {
   /** Measures deviations from `reference`, or the first sample without one: the samples stay, and only each reference changes. */
   measureFrom(reference: number | null) {
     this.#reference = reference;
+    this.#referenceVersion++;
     this.#referred = undefined;
     this.#refer();
   }
@@ -62,7 +66,10 @@ export class Recording {
     const span = this.data.describe().span, at = this.#reference ?? span?.[0];
     if (!span || at === undefined || at > span[1] || at === this.#referred) return;
     const tables = new Map<string, Set<string>>();
-    for (const { collection, field: output } of outputs) tables.set(collection, (tables.get(collection) ?? new Set()).add(output));
+    for (const { field: output, ...target } of outputs) {
+      const table = recordingTable(target);
+      tables.set(table, (tables.get(table) ?? new Set()).add(output));
+    }
     for (const [table, names] of tables) {
       const select = Object.fromEntries([...names].map(output => [referenceField(output), field(output)]));
       const read = this.data.query({ of: table, at, select });
@@ -74,20 +81,35 @@ export class Recording {
     this.#feed.stop();
     this.#referred = undefined;
     const wanted = this.#wanted, channels = this.#channels.filter(channel => wanted.some(sampled => matchesField(channel, sampled)));
-    if (!channels.length) return;
+    if (!channels.length) {
+      const empty = new Data(simulationDataset).axis('Time', 's'), snapshot = empty.snapshot();
+      try { this.data.restore(snapshot); } finally { snapshot.destroy(); empty.destroy(); }
+      this.fields = [];
+      return;
+    }
     const installed = [...new Map(channels.map(channel => {
       const output = { collection: channel.element.collection, ...channel.class ? { class: channel.class } : {}, field: channel.output };
       return [fieldKey(output), output];
     })).values()];
     const { results, extend, failed } = this.options, pace = new Pace();
-    const every = Math.max(1, Math.ceil(this.options.rows * channels.length * 4 / heldBytes));
-    const feed = { kind: 'network' as const, channels, every, maxBytes: packetBytes };
-    this.#feed.start(signal => results.follow(feed, signal, async page => {
-      await pace.ready(signal);
-      pace.spend(() => { this.data.apply(page.bytes); this.#refer(installed); });
-      this.fields = installed;
-      if (page.range) extend(page.range);
-    }), failed);
+    const plan = networkPlan(channels);
+    this.#feed.start(async signal => {
+      const every = recordingStride(plan, this.options.rows, heldBytes), buffer = new RecordingBuffer(this.data);
+      let referenceVersion = this.#referenceVersion;
+      try {
+        await results.follow({ plan, every, maxBytes: packetBytes }, signal, async page => {
+          await pace.ready(signal);
+          if (page.begin) referenceVersion = this.#referenceVersion;
+          pace.spend(() => {
+            if (!buffer.apply(page)) return;
+            if (referenceVersion !== this.#referenceVersion) this.#referred = undefined;
+            this.#refer(installed);
+            this.fields = installed;
+            if (page.range) extend(page.range);
+          });
+        });
+      } finally { buffer.destroy(); }
+    }, failed);
   }
   close() {
     this.#feed.stop();

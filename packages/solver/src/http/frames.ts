@@ -1,5 +1,5 @@
-import { SolverError, type RowsQuery, type SummaryQuery } from '../index.js';
-import type { Reply, RowsHeader, SummaryHeader } from '../protocol.js';
+import { SolverError, type EntriesQuery, type RowsQuery } from '../index.js';
+import type { PlanesHeader, Reply } from '../protocol.js';
 
 // The service's replies: a length-prefixed JSON header, then its planes. Each is refused before it is held if it is more than was
 // asked for.
@@ -45,32 +45,13 @@ class Body {
   }
 }
 
-/** Rows: their header, then one part, their times and time-major values. */
-export async function rowsReply(response: Response, query: RowsQuery): Promise<Reply<RowsHeader>> {
+/** Rows, or entries of a level: their header, then one part, their planes. */
+export async function planesReply(response: Response, query: RowsQuery | EntriesQuery): Promise<Reply<PlanesHeader>> {
   const body = new Body(response.body);
   try {
-    const header = await body.header<RowsHeader>(), size = 8 * header.count * (1 + query.columns.length);
+    const header = await body.header<PlanesHeader>(), planes = 'level' in query && query.level ? 2 : 1;
+    const size = 8 * planes * header.count * (1 + query.columns.length);
     if (size > query.maxBytes) throw invalid();
     return { header, parts: [await body.take(size)] };
   } finally { await body.close(); }
-}
-
-/** A summary: its plan at once, then each tile read from the body only when it is asked for, so a slow reader slows the service. */
-export async function summaryReply(response: Response, query: SummaryQuery): Promise<Reply<SummaryHeader>> {
-  const body = new Body(response.body);
-  const header = await body.header<SummaryHeader>().catch(async cause => { await body.close(); throw cause; });
-  const tiles = header.tiles[Symbol.iterator]();
-  return { header, parts: { [Symbol.asyncIterator]: () => ({
-    async next(): Promise<IteratorResult<ArrayBuffer>> {
-      try {
-        const tile = tiles.next();
-        if (tile.done) { await body.close(); return { done: true, value: undefined }; }
-        const size = 8 * tile.value.rows * (1 + query.columns.length) * (tile.value.kind === 'samples' ? 1 : 2);
-        if (size > query.maxBytes) throw invalid();
-        return { done: false, value: await body.take(size) };
-      } catch (cause) { await body.close(); throw cause; }
-    },
-    // A reader that leaves early stops the body there.
-    async return(): Promise<IteratorResult<ArrayBuffer>> { await body.close(); return { done: true, value: undefined }; },
-  }) } };
 }

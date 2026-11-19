@@ -75,6 +75,18 @@ it('reports unknown fields and keeps the inherited value', () => {
   expect(resolved.marks.find(mark => mark.id === 'buses')?.options).toMatchObject({ radius: 9 });
 });
 
+it('allows native referenced fields and diagnoses cross-dataset simulation references', () => {
+  const document = new CaseDocument(input());
+  const mark = { id: 'branches', target: { collection: 'devices', class: 'Branch' }, kind: 'edges',
+    options: { width: field('params.kv').of('ports.bus1').scale(1, 3).toJSON() } };
+  const resolved = resolveMappings(defaultMarks(), undefined, { marks: [mark] }, target => document.fields(target));
+  expect(resolved.diagnostics).toEqual([]);
+  expect(resolved.marks[0]!.options).toMatchObject({ width: mark.options.width });
+  const invalid = { ...mark, options: { width: { field: 'simulation.Vm', of: 'ports.bus1' } } };
+  expect(resolveMappings(defaultMarks(), undefined, { marks: [invalid] }, target => document.fields(target), true).diagnostics[0]?.message)
+    .toContain('simulation joins');
+});
+
 it('keeps a mapping of what a run records waiting until one has results, and takes any of its measures then', () => {
   const document = new CaseDocument(input());
   const fields = (target: Parameters<ReturnType<typeof simulationFields>>[0]) => simulationFields(document)(target);

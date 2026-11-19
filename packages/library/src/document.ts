@@ -52,6 +52,7 @@ export class CaseDocument {
     buses: new Map(), devices: new Map(), signals: new Map(),
   };
   #incoming = new Map<string, Set<string>>();
+  #rows: Partial<Record<Collection, readonly ElementRecord[]>> = {};
   readonly #info: CaseInfo;
   readonly #extra: Readonly<Record<string, unknown>>;
   readonly #hasSignals: boolean;
@@ -110,6 +111,8 @@ export class CaseDocument {
       this.#elements.set(row.ref.id, next);
       this.#indexConnections(next);
     }
+    // The connection pass replaced row records; public collection arrays hold the resolved records.
+    this.#rows = {};
     this.#fields = new FieldIndex(this.#elements.values());
   }
 
@@ -123,11 +126,14 @@ export class CaseDocument {
     return row?.ref.collection === ref.collection ? row as ElementRecord<C> : undefined;
   }
   rows<C extends Collection>(collection: C): readonly ElementRecord<C>[] {
+    const kept = this.#rows[collection];
+    if (kept) return kept as readonly ElementRecord<C>[];
     const rows: ElementRecord<C>[] = [];
     for (const id of this.#order[collection]) {
       const row = this.#elements.get(id);
       if (row) rows.push(row as ElementRecord<C>);
     }
+    this.#rows[collection] = Object.freeze(rows);
     return rows;
   }
   find<C extends Collection>(collection: C, identifier: string | number): ElementRef<C> | undefined {

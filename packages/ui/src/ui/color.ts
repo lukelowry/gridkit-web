@@ -13,6 +13,16 @@ export function colorHex(value: string, alpha = false): string | null {
     .map(channel => channel.toString(16).padStart(2, '0')).join('');
 }
 
+/**
+ * The page's theme tokens as colors a canvas can draw, under the names `tokens` gives them. They hold for the theme and contrast
+ * shown, so whatever draws with them reads them again when either changes.
+ */
+export function themeColors<Role extends string>(tokens: Readonly<Record<Role, string>>): Record<Role, string> {
+  const style = getComputedStyle(document.documentElement);
+  return Object.fromEntries(Object.entries<string>(tokens).map(([role, token]) =>
+    [role, colorHex(style.getPropertyValue(token).trim(), true) ?? '#808080'])) as Record<Role, string>;
+}
+
 type Rgb = [number, number, number];
 /** `#rgb`, `#rrggbb`, `#rrggbbaa`, or `rgb()`/`rgba()` as channels; `null` for any other color. */
 export function rgbOf(color: string): Rgb | null {

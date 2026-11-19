@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import fixture from '../../library/test/small.case.json' with { type: 'json' };
 import { completedRun } from './fixtures/completed-run.js';
+import { outputLabel } from '../src/simulation/channels.js';
 
 async function openResults(page: Page, edge = false) {
   await page.addInitScript(() => localStorage.setItem('gridkit.preferences', JSON.stringify({ theme: 'light', geography: 'none', resultsDock: 'right' })));
@@ -13,7 +14,7 @@ async function openResults(page: Page, edge = false) {
   await page.getByRole('button', { name: 'Run simulation', exact: true }).click();
   const panel = page.getByRole('region', { name: 'Simulation', exact: true });
   await expect(panel.locator('canvas')).toHaveAttribute('aria-busy', 'false');
-  if (edge) await panel.getByRole('combobox', { name: 'Plot quantity' }).selectOption({ label: 'p1' });
+  if (edge) await panel.getByRole('combobox', { name: 'Plot quantity' }).selectOption({ label: outputLabel('p1') });
   await page.getByRole('button', { name: 'Network', exact: true }).click();
   await expect(page.getByLabel('Network view', { exact: true })).toHaveAttribute('data-ready', 'true');
   return panel;
@@ -78,4 +79,37 @@ for (const edge of [false, true]) test('monitor and network mirror hover and cli
   await expect(readout).toHaveText('');
   await panel.getByRole('button', { name: 'Close results' }).click();
   await expect(network).not.toHaveAccessibleDescription(/Hovered:/);
+});
+
+test('the plot draws the run from its time tiles, and playback speed opens once the run has ended', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const spans: unknown[] = [];
+  page.on('request', request => { if (request.url().endsWith('/entries')) spans.push(request.postDataJSON()); });
+  const panel = await openResults(page);
+  // The run's two rows are the first span of its finest level.
+  expect(spans).toContainEqual(expect.objectContaining({ level: 0, first: 0 }));
+  const speed = panel.getByRole('combobox', { name: 'Playback speed' });
+  await expect(speed).toBeEnabled();
+  await speed.selectOption({ label: '2×' });
+  await expect(speed).toHaveValue('2');
+});
+
+test('selected and pinned traces compare elements without restricting network playback', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const panel = await openResults(page);
+  await page.getByRole('button', { name: 'Table', exact: true }).click();
+  await page.getByRole('gridcell', { name: 'North', exact: true }).click();
+  await panel.getByRole('button', { name: 'Plot options', exact: true }).click();
+  await panel.getByRole('radio', { name: 'Selected and pinned', exact: true }).check();
+  await panel.getByRole('button', { name: 'Pin selected element', exact: true }).click();
+  await expect(panel.getByRole('button', { name: 'Unpin Bus 1', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(panel.getByText('1 of 2 series · selected and pinned', { exact: true })).toBeVisible();
+  await page.getByRole('gridcell', { name: 'South', exact: true }).click();
+  await expect(panel.getByText('2 of 2 series · selected and pinned', { exact: true })).toBeVisible();
+  await panel.getByRole('button', { name: 'Plot options', exact: true }).click();
+  await panel.getByRole('button', { name: 'Unpin Bus 1', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await expect(panel.getByText('1 of 2 series · selected and pinned', { exact: true })).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'Play', exact: true })).toBeEnabled();
 });

@@ -3,7 +3,6 @@
   import { collectionLabel, type Entry } from '../domain/entries.js';
   import { classesOf } from './rows.js';
   import Popover from '../ui/Popover.svelte';
-  import Icon from '../ui/Icon.svelte';
   import PickerPanel from '../ui/PickerPanel.svelte';
   import ChoiceRow from '../ui/ChoiceRow.svelte';
 
@@ -18,8 +17,8 @@
 
 <Popover {label} onopen={() => { query = ''; }}>
   {#snippet trigger(id)}
-    <button class="class-trigger" aria-label={label} title={selected?.display ?? 'Filter by class'} popovertarget={id}>
-      <span>{selected?.display ?? allLabel}</span><Icon name="chevron" />
+    <button class="c-select class-trigger" aria-label={label} title={selected?.display ?? 'Filter by class'} popovertarget={id}>
+      <span>{selected?.display ?? allLabel}</span>
     </button>
   {/snippet}
   {#snippet children(close)}
@@ -41,7 +40,6 @@
 </Popover>
 
 <style>
-  .class-trigger { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; max-width: 12rem; min-width: 0; min-height: var(--control-height); padding: 0; border: 0; color: var(--color-text-2); text-align: left; }
-  .class-trigger > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  .class-trigger :global(svg) { flex: none; width: 12px; height: 12px; }
+  /* In the header it reads as a select without a frame, as the results' quantity does. */
+  .class-trigger { max-width: 12rem; border-color: transparent; background-color: transparent; color: var(--color-text-2); font: var(--type-label); }
 </style>

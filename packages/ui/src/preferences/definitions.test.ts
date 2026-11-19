@@ -4,6 +4,7 @@ import { entriesOf } from '../domain/entries.js';
 import { classesOf, classKey, columnsOf, tableSource } from '../table/rows.js';
 import { tables } from '../rendering/data.js';
 import { createPreferences } from './state.svelte.js';
+import { defaults, geographyOf } from './definitions.js';
 import fixture from '../../../library/test/small.case.json';
 
 it('keeps preference drafts local until Apply and persists mappings once', () => {
@@ -39,6 +40,16 @@ it('keeps valid preferences and drops the rest', () => {
   restored.reset('pickRadius');
   expect(restored.value.pickRadius).toBe(6);
   expect(() => restored.set('pickRadius', -1)).toThrow();
+});
+
+it('fills a map\'s land over the ocean at the scale of its coasts, unless the ocean is turned off or no map is drawn', () => {
+  const layers = (stored: object) => geographyOf({ ...defaults, ...stored });
+  expect(layers({})).toEqual([{ url: expect.stringMatching(/ne_110m_land\.geojson$/), fill: true },
+    { url: expect.stringMatching(/ne_110m_admin_0_countries\.geojson$/), fill: false }]);
+  expect(layers({ geography: 'states' })[0]).toEqual({ url: expect.stringMatching(/ne_50m_land\.geojson$/), fill: true });
+  expect(layers({ networkOcean: false }).every(layer => !layer.fill)).toBe(true);
+  expect(layers({ geography: 'none' })).toEqual([]);
+  expect(layers({ geography: 'custom', geographyUrl: 'https://example.test/lines.geojson' }).map(layer => layer.fill)).toEqual([true, false]);
 });
 
 it('draws every bus class in one table and leaves device references native', () => {

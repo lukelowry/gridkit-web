@@ -16,7 +16,7 @@ afterEach(() => { vi.unstubAllGlobals(); });
 it('closes a results port that arrives after its run was closed', async () => {
   let resolve!: (port: MessagePort) => void;
   const pending = new Promise<MessagePort>(done => { resolve = done; });
-  const results = new RunResults(pending);
+  const results = new RunResults(pending, 1);
   results.close();
   const { port1, port2 } = new MessageChannel(), close = vi.spyOn(port1, 'close');
   try {
@@ -29,7 +29,7 @@ it('closes a results port that arrives after its run was closed', async () => {
 
 it('starts one worker on demand and transfers the result port once', async () => {
   const { port1, port2 } = new MessageChannel();
-  const results = new RunResults(Promise.resolve(port1));
+  const results = new RunResults(Promise.resolve(port1), 1);
   try {
     await Promise.resolve();
     expect(workers).toHaveLength(1);

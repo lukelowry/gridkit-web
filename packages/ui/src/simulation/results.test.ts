@@ -1,10 +1,12 @@
 import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
-import { Data, load, Patch } from 'latkit';
-import type { ResultReader, RowsQuery, RunState, Samples, SummaryQuery, SummaryReply, Tile } from '@gridkit/solver';
-import { PlotBuffer } from './plot.js';
+import { Data, load } from 'latkit';
+import type { EntriesQuery, Envelope, ResultReader, RowsQuery, RunState, Samples } from '@gridkit/solver';
+import { plotDataset } from './plot.js';
 import { RunResults, type ResultsMessage, type ResultsReply } from './results.js';
-import { addTile, NetworkPacker, networkPages, packPlot, plotPages, ResultHost, type NetworkFeed, type PlotFeedRequest, type PlotPage } from './results.worker.js';
+import { networkPages, ResultHost, type NetworkFeed, type TileSet } from './results.worker.js';
+import { networkPlan } from './recording-plan.js';
+import { RecordingBuffer } from './recording-buffer.js';
 
 beforeAll(async () => { await load({ wasm: await WebAssembly.compile(new Uint8Array(await readFile(new URL(import.meta.resolve('latkit/wasm'))))) }); });
 afterEach(() => vi.unstubAllGlobals());
@@ -26,11 +28,11 @@ class WorkerStub {
   }
 }
 const flush = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); };
-const feed: NetworkFeed = { kind: 'network', channels: [], every: 1, maxBytes: 4096 };
+const feed: NetworkFeed = { plan: networkPlan([]), every: 1, maxBytes: 4096 };
 function facade() {
   vi.stubGlobal('Worker', WorkerStub);
   const { port1 } = new MessageChannel();
-  return { results: new RunResults(Promise.resolve(port1)), stub: WorkerStub.instance, port: port1 };
+  return { results: new RunResults(Promise.resolve(port1), 1), stub: WorkerStub.instance, port: port1 };
 }
 const kinds = (stub: WorkerStub) => stub.messages.map(message => message.kind);
 /** A worker script that could not load, as the browser reports one: an error with no message. */
@@ -54,7 +56,7 @@ it('opens the run\'s port once, pulls a page only once the last is applied, and 
   const applied = vi.fn(() => new Promise<void>(resolve => { release = resolve; }));
   const following = results.follow(feed, abort.signal, applied);
   await flush();
-  expect(stub.messages[0]).toMatchObject({ kind: 'open', port });
+  expect(stub.messages[0]).toMatchObject({ kind: 'open', port, width: 1 });
   stub.reply('open'); await flush();
   expect(stub.messages[1]).toMatchObject({ kind: 'follow', feed: 0, request: feed });
   stub.reply('follow'); await flush();
@@ -87,6 +89,14 @@ it('follows feeds side by side: a late page of an aborted one is ignored, and st
   results.close();
 });
 
+it('keeps one Tiles per set, each at an address of its own', () => {
+  const { results } = facade(), shown = results.tiles(set);
+  expect(results.tiles(set)).toBe(shown);
+  expect(shown.name).toBe(plotDataset);
+  expect(results.tiles({ ...set, basis: 'change' }).url).not.toBe(shown.url);
+  results.close();
+});
+
 it('rejects what is pending on a worker fault, and everything after', async () => {
   const { results, stub } = facade();
   const pending = results.follow(feed, new AbortController().signal, () => {});
@@ -98,10 +108,10 @@ it('rejects what is pending on a worker fault, and everything after', async () =
 
 const revision = { rows: 4, state: 'running' as RunState, range: [0, 3] as const };
 const samples = (first: number, times: number[], values = times, columns = ['v']): Samples => ({ kind: 'samples', first, columns, times: Float64Array.from(times), values: Float64Array.from(values) });
-const never = async (): Promise<SummaryReply> => { throw new Error('Unexpected summary.'); };
 const noRows = async () => { throw new Error('Unexpected rows.'); };
+const noEntries = async () => { throw new Error('Unexpected entries.'); };
 /** A reader answering as `reader` says, and nothing else. */
-const readerOf = (reader: Partial<ResultReader>): ResultReader => ({ rows: noRows, summary: never, close() {}, ...reader });
+const readerOf = (reader: Partial<ResultReader>): ResultReader => ({ rows: noRows, entries: noEntries, close() {}, ...reader });
 const bus = [{ column: 'v', element: { collection: 'buses' as const, id: 'bus' }, output: 'Vm', label: 'Voltage', unit: 'p.u.' }];
 async function drain<T>(pages: AsyncGenerator<T>) { const out = []; for await (const page of pages) out.push(page); return out; }
 
@@ -112,99 +122,79 @@ it('reads the network from its first row to the run\'s last, resetting only at t
     { rows: 4, state: 'completed' as RunState, range: [0, 3] as const, samples: samples(4, []) },
   ];
   const rows = vi.fn(async (_query: RowsQuery) => replies.shift()!);
-  const pages = await drain(networkPages(readerOf({ rows }), { ...feed, channels: bus, maxBytes: 64 }, new AbortController().signal));
+  const pages = await drain(networkPages(readerOf({ rows }), { ...feed, plan: networkPlan(bus), maxBytes: 64 }, new AbortController().signal));
   expect(rows.mock.calls.map(([query]) => [query.from, query.wait, query.every, query.maxBytes])).toEqual([[0, true, 1, 64], [3, true, 1, 64], [4, true, 1, 64]]);
-  const data = new Data('simulation');
+  const data = new Data('simulation'), buffer = new RecordingBuffer(data);
   try {
-    for (const page of pages) data.apply(page.bytes);
-    expect(pages).toHaveLength(2);
+    for (const page of pages) buffer.apply(page);
+    expect(pages.filter(page => page.complete)).toHaveLength(2);
     expect(data.describe().span).toEqual([0, 3]);
-    expect(data.get('buses', 'bus', 'Vm', { at: 2 })).toBe(2);
-    expect(data.get('buses', 'bus', 'Vm', { at: 3 })).toBe(3);
-  } finally { data.destroy(); }
+    expect(data.get('Bus', 'bus', 'Vm', { at: 2 })).toBe(2);
+    expect(data.get('Bus', 'bus', 'Vm', { at: 3 })).toBe(3);
+  } finally { buffer.destroy(); data.destroy(); }
 });
 
 it('steps by every Nth row, where the whole run would not fit', async () => {
   const replies = [{ ...revision, rows: 7, samples: samples(0, [0, 3]) }, { ...revision, rows: 7, state: 'completed' as RunState, samples: samples(6, [6]) }];
   const rows = vi.fn(async (_query: RowsQuery) => replies.shift()!);
-  await drain(networkPages(readerOf({ rows }), { ...feed, channels: bus, every: 3 }, new AbortController().signal));
+  await drain(networkPages(readerOf({ rows }), { ...feed, plan: networkPlan(bus), every: 3 }, new AbortController().signal));
   expect(rows.mock.calls.map(([query]) => query.from)).toEqual([0, 6]);
 });
 
-it('installs each output as recorded, one field per output however many elements record it', () => {
+it('installs each output as recorded, one field per output however many elements record it', async () => {
   const both = [...bus, { column: 'w', element: { collection: 'buses' as const, id: 'other' }, output: 'Vm', label: 'Other', unit: 'p.u.' }];
-  const packer = new NetworkPacker(both), data = new Data('simulation');
+  const data = new Data('simulation'), buffer = new RecordingBuffer(data);
   try {
-    data.apply(packer.pack(samples(0, [0, 1], [1, 2, 0.75, 1.5], ['v', 'w']), true));
+    const rows = async () => ({ rows: 2, state: 'completed' as const, range: [0, 1] as const, samples: samples(0, [0, 1], [1, 2, 0.75, 1.5], ['v', 'w']) });
+    for await (const page of networkPages(readerOf({ rows }), { ...feed, plan: networkPlan(both) }, new AbortController().signal)) buffer.apply(page);
     expect(data.describe().tables[0]!.fields.map(field => field.name)).toEqual(['Vm']);
-    expect(data.get('buses', 'bus', 'Vm', { at: 1 })).toBe(0.75);
-    expect(data.get('buses', 'other', 'Vm', { at: 1 })).toBe(1.5);
-  } finally { data.destroy(); }
-});
-
-it('joins reordered channels by identity, keeping equal-time event rows', () => {
-  const network = ['b', 'a'].map((id, index) => ({ column: String(index), element: { collection: 'buses' as const, id }, output: 'Vm', label: id, unit: 'p.u.' }));
-  const packer = new NetworkPacker(network), data = new Data('simulation');
-  try {
-    data.apply(packer.pack(samples(0, [0, 1], [1, 10, 2, 20], ['0', '1']), true));
-    data.apply(packer.pack(samples(2, [1, 2], [4, 40, 3, 30], ['0', '1']), false));
-    expect(data.get('buses', 'a', 'Vm', { at: 1 })).toBe(40);
-    expect(data.get('buses', 'b', 'Vm', { at: 2 })).toBe(3);
-    expect(data.get('buses', 'a', 'Vm', { at: 0 })).toBe(10);
-  } finally { data.destroy(); }
-});
-
-const plot: PlotFeedRequest = { kind: 'plot', columns: ['v'], basis: 'value', reference: null, range: [0, 8], resolution: 32, maxBytes: 4096 };
-function summaryOf(state: RunState, reset: boolean, sealed: number, tiles: Tile[]): SummaryReply {
-  return { rows: 9, state, range: [0, 8], reset, cursor: { level: 0, first: 0, sealed }, tiles: tiles.map(({ target, level, first }) => ({ target, kind: 'samples', level, first, rows: 1 })),
-    async *pages() { yield* tiles; } };
-}
-const tile = (target: Tile['target'], first: number, value = first): Tile => ({ target, level: 0, first, block: samples(first, [first], [value]) });
-
-it('marks where each tile falls in its update, and says what it holds on the next', async () => {
-  const replies = [
-    summaryOf('running', true, 2, [tile('history', 0), tile('history', 1), tile('edge', 2)]),
-    summaryOf('completed', false, 2, [tile('edge', 2)]),
-  ];
-  const summary = vi.fn(async (_query: SummaryQuery) => replies.shift()!);
-  const pages = await drain(plotPages(readerOf({ summary }), plot, new AbortController().signal));
-  expect(pages.map(({ begin, reset, seal, complete }) => ({ begin, reset, seal, complete }))).toEqual([
-    { begin: true, reset: true, seal: false, complete: false },
-    { begin: false, reset: false, seal: true, complete: false },
-    { begin: false, reset: false, seal: false, complete: true },
-    // No new history: an empty page seals it, and begins what the edges finish.
-    { begin: true, reset: false, seal: true, complete: false },
-    { begin: false, reset: false, seal: false, complete: true },
-  ]);
-  expect(summary.mock.calls[0]![0]).toMatchObject({ cursor: null });
-  expect(summary.mock.calls[0]![0]).not.toHaveProperty('after');
-  expect(summary.mock.calls[1]![0]).toMatchObject({ cursor: { level: 0, first: 0, sealed: 2 }, after: 9 });
-});
-
-it('finishes an update that holds nothing at all', async () => {
-  const pages = await drain(plotPages(readerOf({ summary: async () => summaryOf('completed', true, 0, []) }), plot, new AbortController().signal));
-  expect(pages).toHaveLength(1);
-  expect(pages[0]).toMatchObject({ begin: true, reset: true, seal: true, complete: true });
-});
-
-it('reads the reference once, at its time, then shows each trace from it', async () => {
-  const replies = [summaryOf('running', true, 0, [tile('edge', 0, 10)]), summaryOf('completed', false, 0, [tile('edge', 1, 11)])];
-  const rows = vi.fn(async (_query: RowsQuery) => ({ ...revision, samples: samples(0, [0], [10]) }));
-  const pages = await drain(plotPages(readerOf({ rows, summary: async () => replies.shift()! }), { ...plot, basis: 'change', reference: 1.5 }, new AbortController().signal));
-  const data = new Data('simulation-plot'), buffer = new PlotBuffer(data), shown: unknown[] = [];
-  try {
-    for (const page of pages) if (buffer.apply(page)) shown.push(data.get('Trace', 'v', 'value', { at: shown.length }));
+    expect(data.get('Bus', 'bus', 'Vm', { at: 1 })).toBe(0.75);
+    expect(data.get('Bus', 'other', 'Vm', { at: 1 })).toBe(1.5);
   } finally { buffer.destroy(); data.destroy(); }
-  expect(shown).toEqual([0, 1]);
-  expect(rows).toHaveBeenCalledOnce();
-  expect(rows.mock.calls[0]![0]).toMatchObject({ columns: ['v'], at: 1.5, count: 1 });
+});
+
+it('joins reordered channels by identity, keeping equal-time event rows', async () => {
+  const network = ['b', 'a'].map((id, index) => ({ column: String(index), element: { collection: 'buses' as const, id }, output: 'Vm', label: id, unit: 'p.u.' }));
+  const data = new Data('simulation'), buffer = new RecordingBuffer(data);
+  try {
+    const blocks = [samples(0, [0, 1], [1, 10, 2, 20], ['0', '1']), samples(2, [1, 2], [4, 40, 3, 30], ['0', '1'])];
+    const rows = async () => ({ rows: 4, state: 'completed' as const, range: [0, 2] as const, samples: blocks.shift()! });
+    for await (const page of networkPages(readerOf({ rows }), { ...feed, plan: networkPlan(network) }, new AbortController().signal)) buffer.apply(page);
+    expect(data.get('Bus', 'a', 'Vm', { at: 1 })).toBe(40);
+    expect(data.get('Bus', 'b', 'Vm', { at: 2 })).toBe(3);
+    expect(data.get('Bus', 'a', 'Vm', { at: 0 })).toBe(10);
+  } finally { buffer.destroy(); data.destroy(); }
+});
+
+it('shards wide reads and transfers, publishes whole revisions, and preserves equal-time samples', async () => {
+  const channels = Array.from({ length: 20 }, (_, i) => ({ ...bus[0]!, column: String(i), element: { collection: 'buses' as const, id: `b${i}` } }));
+  const times = [0, 1, 1], queries: RowsQuery[] = [];
+  const reader = readerOf({ rows: async query => {
+    queries.push(query);
+    const first = query.from ?? 0, count = Math.min(query.count ?? 3, Math.floor(query.maxBytes / (8 * (query.columns.length + 1))), times.length - first);
+    return { rows: 3, state: 'completed', range: [0, 1], samples: samples(first, times.slice(first, first + count),
+      Array.from({ length: count * query.columns.length }, (_, index) => (first + Math.floor(index / query.columns.length)) * 100 + Number(query.columns[index % query.columns.length])), [...query.columns]) };
+  } });
+  const data = new Data('simulation'), buffer = new RecordingBuffer(data);
+  let commits = 0;
+  try {
+    for await (const page of networkPages(reader, { ...feed, plan: networkPlan(channels), maxBytes: 64 }, new AbortController().signal)) {
+      expect(page.bytes.byteLength).toBeLessThanOrEqual(64);
+      buffer.apply(page);
+      if (page.complete) commits++;
+      expect(data.get('Bus', 'b19', 'Vm', { at: 1 })).toBe(commits ? (commits - 1) * 100 + 19 : null);
+    }
+    expect(commits).toBe(3);
+    expect(data.get('Bus', 'b19', 'Vm', { at: 1 })).toBe(219);
+    expect(queries.every(query => query.columns.length <= 7)).toBe(true);
+  } finally { buffer.destroy(); data.destroy(); }
 });
 
 it('serves a run\'s feeds side by side, stops each alone, and lets the run\'s port go', async () => {
   const signals: AbortSignal[] = [], close = vi.fn();
   const reader = readerOf({ close, rows: async (_query, signal) => { signals.push(signal!); return new Promise((_, reject) => signal!.addEventListener('abort', () => reject(signal!.reason))); } });
-  const host = new ResultHost(() => reader), network = { ...feed, channels: bus }, { port1 } = new MessageChannel();
-  await host.handle({ kind: 'open', port: port1 });
+  const host = new ResultHost(() => reader), network = { ...feed, plan: networkPlan(bus) }, { port1 } = new MessageChannel();
+  await host.handle({ kind: 'open', port: port1, width: 1 });
   await host.handle({ kind: 'follow', feed: 0, request: network });
   await host.handle({ kind: 'follow', feed: 1, request: network });
   const first = host.handle({ kind: 'next', feed: 0 }), rejected = expect(first).rejects.toMatchObject({ name: 'AbortError' });
@@ -219,57 +209,85 @@ it('serves a run\'s feeds side by side, stops each alone, and lets the run\'s po
   expect(close).toHaveBeenCalledOnce();
 });
 
-const flags = { ...revision, begin: true, reset: true, seal: true, complete: true };
-const envelope = (minimum: number, maximum: number): Tile => ({ target: 'history', level: 1, first: 0, block: { kind: 'envelope', columns: ['v'], starts: Float64Array.of(0), ends: Float64Array.of(7),
-  minimum: Float64Array.of(minimum), maximum: Float64Array.of(maximum) } });
-const edge = (value: number): Tile => ({ target: 'edge', level: 0, first: 8, block: samples(8, [8], [value]) });
-/** The least and greatest a packed plot page draws. */
-function extent(page: PlotPage) {
-  const data = new Data('simulation-plot');
+const set: TileSet = { columns: ['v'], basis: 'value', reference: null };
+const envelope = (columns: string[], starts: number[], ends: number[], minimum: number[], maximum: number[]): Envelope => ({ kind: 'envelope', columns,
+  starts: Float64Array.from(starts), ends: Float64Array.from(ends), minimum: Float64Array.from(minimum), maximum: Float64Array.from(maximum) });
+/** A results worker's host of `reader`, its run's port open: a run of `width` columns. */
+async function hosting(reader: ResultReader, width = 2) {
+  const host = new ResultHost(() => reader), { port1 } = new MessageChannel();
+  await host.handle({ kind: 'open', port: port1, width });
+  return host;
+}
+const file = async (host: ResultHost, shown: TileSet, path: string) => await host.handle({ kind: 'tile', set: shown, path }) as Uint8Array;
+/** The plot's dataset as latkit draws `shown` from `paths`, over its base. */
+async function drawn(host: ResultHost, shown: TileSet, paths: string[]) {
+  const data = new Data(plotDataset);
+  for (const path of ['base.latk', ...paths]) data.apply(await file(host, shown, path));
+  return data;
+}
+/** The least and greatest the plot draws of `shown`'s first coarse span. */
+async function extent(host: ResultHost, shown: TileSet) {
+  const data = await drawn(host, shown, ['1/0.latk']);
   try {
-    data.apply(page.history).apply(page.edges);
-    const { least, greatest } = data.envelope({ table: 'Trace', field: 'value', range: [0, 9], spans: 1 });
-    return [Math.min(...least), Math.max(...greatest)];
+    const { least, greatest } = data.envelope({ table: 'Trace', field: 'value', range: [0, 7], spans: 1 });
+    return [...least, ...greatest];
   } finally { data.destroy(); }
 }
 
-it('shifts a trace in full precision, so a small change on a large value keeps its detail', () => {
-  const pressure = 4885576.181472959, tiles = [envelope(pressure - 5, pressure), edge(pressure + 0.25)];
-  // Float32 keeps only whole pascals here: as recorded, the quarter pascal is gone.
-  expect(extent(packPlot(['v'], tiles, 'value', undefined, flags))).toEqual([Math.fround(pressure - 5), Math.fround(pressure + 0.25)]);
-  expect(extent(packPlot(['v'], tiles, 'change', new Map([['v', pressure]]), flags))).toEqual([-5, 0.25]);
+it('describes a set\'s time tiles: each level the run holds a whole entry of, in spans near 1 MiB of its rows', async () => {
+  const reader = readerOf({ rows: async query => ({ rows: 600, state: 'running', range: [0, 5.99], samples: samples(0, [0], [1], [...query.columns]) }) });
+  const manifest = async (width: number) => {
+    const host = await hosting(reader, width);
+    try { return JSON.parse(new TextDecoder().decode(await file(host, set, 'frames.json'))); } finally { host.close(); }
+  };
+  expect(await manifest(1)).toEqual({ data: 'base.latk', chunk: 131072, url: '{level}/{index}.latk', frames: [{ table: 'Trace', field: 'value', levels: 3, frames: [0, 600] }] });
+  // A plot of one series reads few rows of a wide run a span: the solver reads them whole.
+  expect((await Promise.all([2000, 70000].map(manifest))).map(({ chunk }) => chunk)).toEqual([64, 8]);
 });
 
-it('keeps a summary\'s order in percent, from a negative reference too', () => {
-  expect(extent(packPlot(['v'], [envelope(-3, -1)], 'percent', new Map([['v', -2]]), flags))).toEqual([-50, 50]);
-});
-
-it.each([1, 2])('writes envelopes as latkit reads them, extrema and gaps per channel, at level %i', level => {
-  const span = 8 ** level, data = new Data('trace');
+it.each([1, 2])('writes spans latkit draws as the solver keeps level %i: extrema and gaps per series', async level => {
+  const span = 8 ** level, queries: EntriesQuery[] = [];
+  const host = await hosting(readerOf({ entries: async query => {
+    queries.push(query);
+    return { ...revision, block: envelope(['a', 'b'], [0, span, 2*span], [span-1, 2*span-1, 3*span-1], [1, 10, NaN, NaN, 5, 50], [2, 20, NaN, NaN, 6, 60]) };
+  } }));
+  const data = await drawn(host, { ...set, columns: ['a', 'b'] }, [`${level}/0.latk`]);
   try {
-    const patch = new Patch().replace('Trace', ['a', 'b'], {});
-    addTile(patch, { level, first: 0, block: { kind: 'envelope', columns: ['a', 'b'],
-      starts: Float64Array.of(0, span, 2*span), ends: Float64Array.of(span-1, 2*span-1, 3*span-1),
-      minimum: Float64Array.of(1, 10, NaN, NaN, 5, 50), maximum: Float64Array.of(2, 20, NaN, NaN, 6, 60) } });
-    data.apply(patch);
     const read = data.envelope({ table: 'Trace', field: 'value', range: [0, 3*span], spans: 3 });
     expect([...read.least]).toEqual([1, NaN, 5, 10, NaN, 50]);
     expect([...read.greatest]).toEqual([2, NaN, 6, 20, NaN, 60]);
-  } finally { data.destroy(); }
+  } finally { data.destroy(); host.close(); }
+  // A span of two series is 65,536 entries, its least and greatest of each.
+  expect(queries).toEqual([{ columns: ['a', 'b'], level, first: 0, count: 65536, maxBytes: 16 * 65536 * 3 }]);
 });
 
-it('reads an aligned coarse tile and a finer edge without inventing levels', () => {
-  const data = new Data('mixed');
-  try {
-    const patch = new Patch().replace('Trace', ['a'], {});
-    addTile(patch, { level: 2, first: 0, block: { kind: 'envelope', columns: ['a'],
-      starts: Float64Array.of(0), ends: Float64Array.of(63), minimum: Float64Array.of(-10), maximum: Float64Array.of(10) } });
-    addTile(patch, { level: 1, first: 8, block: { kind: 'envelope', columns: ['a'],
-      starts: Float64Array.of(64), ends: Float64Array.of(71), minimum: Float64Array.of(-20), maximum: Float64Array.of(20) } });
-    addTile(patch, { level: 0, first: 72, block: { kind: 'samples', first: 72, columns: ['a'], times: Float64Array.of(72), values: Float64Array.of(30) } });
-    data.apply(patch);
-    const read = data.envelope({ table: 'Trace', field: 'value', range: [0, 73], spans: 1 });
-    expect(Math.min(...read.least)).toBe(-20);
-    expect(Math.max(...read.greatest)).toBe(30);
-  } finally { data.destroy(); }
+it('colors each series as its set says, or by its place', async () => {
+  const host = await hosting(readerOf({}));
+  for (const [series, colors] of [[undefined, [0, 1]], [[3, 0], [3, 0]]] as const) {
+    const data = await drawn(host, { ...set, columns: ['a', 'b'], ...series && { series } }, []);
+    try { expect(['a', 'b'].map(id => data.get('Trace', id, 'series'))).toEqual(colors); } finally { data.destroy(); }
+  }
+  host.close();
+});
+
+it('measures a trace from its reference in full precision, reading the reference once for its set', async () => {
+  const pressure = 4885576.181472959, references: RowsQuery[] = [];
+  const host = await hosting(readerOf({
+    rows: async query => { references.push(query); return { ...revision, samples: samples(0, [0], [pressure]) }; },
+    entries: async () => ({ ...revision, block: envelope(['v'], [0], [7], [pressure - 5], [pressure + 0.25]) }),
+  }));
+  // Float32 keeps only whole pascals here: as recorded, the quarter pascal is gone.
+  expect(await extent(host, set)).toEqual([Math.fround(pressure - 5), Math.fround(pressure + 0.25)]);
+  const change: TileSet = { ...set, basis: 'change', reference: 1.5 };
+  expect(await extent(host, change)).toEqual([-5, 0.25]);
+  expect(await extent(host, change)).toEqual([-5, 0.25]);
+  expect(references).toEqual([expect.objectContaining({ columns: ['v'], at: 1.5, count: 1 })]);
+  host.close();
+});
+
+it('keeps a span\'s order in percent, from a negative reference too', async () => {
+  const host = await hosting(readerOf({ rows: async () => ({ ...revision, samples: samples(0, [0], [-2]) }),
+    entries: async () => ({ ...revision, block: envelope(['v'], [0], [7], [-3], [-1]) }) }));
+  expect(await extent(host, { ...set, basis: 'percent', reference: null })).toEqual([-50, 50]);
+  host.close();
 });

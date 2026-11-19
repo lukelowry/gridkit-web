@@ -32,6 +32,9 @@ func (e *Extent) timeRange() *[2]float64 {
 	return &[2]float64{e.start, e.end}
 }
 
+// entries is how many whole entries `level` holds: rows at level 0, and above it the buckets all eight of whose entries below are in.
+func (e *Extent) entries(level int) int { return e.rows >> (3 * level) }
+
 // Store appends FP64 rows of [t, columns...] and folds every eight entries of a level into one min/max entry of the next.
 type Store struct {
 	dir     string
@@ -145,6 +148,7 @@ func (s *Store) fold(level int, from []float64, stride, end, low, high int) erro
 		slot[1] = entry[end]
 	}
 	whole := total / 8
+	// Only the writer reads the summary still gathering, so it is overwritten in place.
 	s.held[level], s.partials[level] = total%8, append(s.partials[level][:0], out[whole*size:]...)
 	if whole == 0 {
 		return nil

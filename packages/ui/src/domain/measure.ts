@@ -40,3 +40,18 @@ export const readings: Readonly<Record<string, { map: ColormapName; domain: [num
   Va: { map: 'twilight', domain: [-Math.PI, Math.PI], height: [-Math.PI, Math.PI], band: { change: 0.5 } },
 };
 export const defaultBand = ({ output, basis }: Measure) => readings[output]?.band[basis] ?? (basis === 'percent' ? 5 : 1);
+/**
+ * The least range the plot shows of `measure`, so a steady value draws flat rather than filling the plot with the solver's noise: a
+ * tenth of the band the network colors a deviation across, and as recorded, that of a change. `null` for an output whose scale is
+ * not known, which the plot fits as closely as its values lie.
+ */
+export function leastSpan({ output, basis }: Measure): number | null {
+  const band = readings[output]?.band[basis === 'value' ? 'change' : basis];
+  return band === undefined ? null : band / 10;
+}
+
+/** A branch's power into the bus at either end, in per unit of the system base: what moves comets at full speed. */
+const branchPower = 2;
+const flowReaches: Readonly<Record<string, number>> = { p1: branchPower, p2: branchPower, q1: branchPower, q2: branchPower };
+/** How far `measure` reaches either way when it moves comets along a stroke: as recorded, its own reach, and a deviation its band. */
+export const flowReach = (measure: Measure) => measure.basis === 'value' ? flowReaches[measure.output] ?? 1 : defaultBand(measure);

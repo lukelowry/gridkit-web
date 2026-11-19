@@ -1,14 +1,15 @@
-import { SolverError, type ArtifactName, type RowsQuery, type RunId, type RunRequest, type SummaryQuery } from './index.js';
-import type { ArtifactHeader, Command, Event, Reply, RowsHeader, RunStatus, SummaryHeader } from './protocol.js';
+import { SolverError, type ArtifactName, type Engine, type EntriesQuery, type RowsQuery, type RunId, type RunRequest } from './index.js';
+import type { ArtifactHeader, Command, Event, PlanesHeader, Reply, RunStatus } from './protocol.js';
 import { answer } from './reply.js';
 
 /** What an implementation does in its worker. serve() does the rest: the page, each reader, aborts, and moving every part. */
 export interface Backend {
+  readonly engine: Engine;
   /** Resolves once `run` is accepted, or rejects it (busy, invalid); its statuses follow through the report. */
   start(run: RunId, request: RunRequest): Promise<void>;
   cancel(run: RunId): Promise<void>;
-  rows(run: RunId, query: RowsQuery, signal: AbortSignal): Promise<Reply<RowsHeader>>;
-  summary(run: RunId, query: SummaryQuery, signal: AbortSignal): Promise<Reply<SummaryHeader>>;
+  rows(run: RunId, query: RowsQuery, signal: AbortSignal): Promise<Reply<PlanesHeader>>;
+  entries(run: RunId, query: EntriesQuery, signal: AbortSignal): Promise<Reply<PlanesHeader>>;
   artifact(run: RunId, name: ArtifactName, signal: AbortSignal): Promise<Reply<ArtifactHeader>>;
   close(): void;
 }
@@ -39,7 +40,7 @@ export function serve<Options>(open: Open<Options>, scope = self as unknown as E
       if (data.op === 'open') {
         backend?.close();
         backend = await open(data.options as Options, report);
-        send({ kind: 'answer', id: data.id, ...!backend && { absent: true as const } });
+        send({ kind: 'answer', id: data.id, ...backend && { engine: backend.engine } });
         return;
       }
       const opened = backend;
@@ -48,7 +49,7 @@ export function serve<Options>(open: Open<Options>, scope = self as unknown as E
         case 'start': await opened.start(data.run, { study: data.study, model: data.model }); break;
         case 'cancel': await opened.cancel(data.run); break;
         case 'results': answer(data.port, (question, signal) => question.op === 'rows' ? opened.rows(data.run, question.query, signal)
-          : question.op === 'summary' ? opened.summary(data.run, question.query, signal) : opened.artifact(data.run, question.name, signal)); break;
+          : question.op === 'entries' ? opened.entries(data.run, question.query, signal) : opened.artifact(data.run, question.name, signal)); break;
       }
       send({ kind: 'answer', id: data.id });
     } catch (cause) { send({ kind: 'answer', id: data.id, error: SolverError.of(cause) }); }

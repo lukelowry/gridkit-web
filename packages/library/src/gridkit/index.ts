@@ -11,7 +11,7 @@ export type { EventType, SimulationEvent, Study, StudyIssue, StudyTargets } from
 
 // What GridKit reads, and what it records of each element.
 export { compile } from './compile.js';
-export { recordedOutputs } from './channels.js';
+export { recordableOutputs, type WantedOutput } from './channels.js';
 
 /** One output of one element, and the column GridKit records it in. */
 export interface Channel {

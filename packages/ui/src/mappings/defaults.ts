@@ -2,7 +2,8 @@ import type { ColormapNode, CustomColormap, ScaleNode, Size, Theme, Scene } from
 import { elementCatalog, portsOf, record, type CaseDocument, type ElementTarget, type FieldInfo, type Position, type SavedViews, type Space } from '@gridkit/library';
 import type { Preferences } from '../preferences/definitions.js';
 import { isDark, rgbOf } from '../ui/color.js';
-import { defaultMarks, mergeTheme, recognize, type MarkDefinition } from '../domain/views.js';
+import { focusOf } from '../ui/latkit.js';
+import { defaultMarks, mergeTheme, normalizeSpace, recognize, type MarkDefinition } from '../domain/views.js';
 import { resolveMappings } from './resolve.js';
 import { untrack } from 'svelte';
 import { defaultBand, fieldOf, readings, type Measure } from '../domain/measure.js';
@@ -109,28 +110,38 @@ export function fittedSizes(drawing: Drawing | undefined, theme: SceneTheme, lea
   };
 }
 
+/** The page's tokens a network draws in, by what each colors. */
+export const paletteTokens = {
+  background: '--color-bg', vertex: '--color-primary-text', line: '--color-graph-line', text: '--color-text-1', grid: '--color-graph-grid',
+  surface: '--color-surface-2', water: '--color-graph-water', hover: '--color-graph-hover', selected: '--color-graph-selection',
+} as const;
 /** Theme colors as CSS; the views normalize them for contrast calculations, and the mapping settings name them as tokens. */
-export interface Palette { background: string; vertex: string; line: string; text: string; grid: string; surface: string; hover: string; selected: string }
-const tokens: Palette = {
-  background: 'var(--color-bg)', vertex: 'var(--color-primary-text)', line: 'var(--color-graph-line)', text: 'var(--color-text-1)', grid: 'var(--color-graph-grid)',
-  surface: 'var(--color-surface-2)', hover: 'var(--color-graph-hover)', selected: 'var(--color-graph-selection)',
-};
+export type Palette = Record<keyof typeof paletteTokens, string>;
+const tokens = Object.fromEntries(Object.entries(paletteTokens).map(([role, token]) => [role, `var(${token})`])) as Palette;
 export type SceneTheme = Exclude<Theme, string>;
 
-/** Shared UI tokens translated into the network's rendering theme. */
+/**
+ * Shared UI tokens translated into the network's rendering theme. Comets take the ground's color: every stroke they run along is
+ * fitted to read on that ground, so each comet reads on its stroke at the stroke's own contrast, in every theme and on a custom
+ * background.
+ */
 export function networkTheme(v: Preferences, palette: Palette = tokens, base: 'light' | 'dark' = 'light'): SceneTheme {
+  const background = v.networkBackground || palette.background;
   return {
-    base, background: v.networkBackground || palette.background,
-    vertex: { color: palette.vertex, radius: 5 }, edge: { color: null, width: 1.5 },
-    line: { color: palette.line }, missing: '#808080', grid: v.networkGridColor || palette.grid, gridSpacing: v.networkGridSpacing,
+    base, background,
+    vertex: { color: palette.vertex, radius: 5 },
+    edge: { color: null, width: 1.5, parallel: v.parallelBranches === 'overlap' ? null : { gap: v.parallelGap, converge: v.parallelBranches } },
+    flow: { color: v.flowColor || background, spacing: v.flowSpacing, length: v.flowLength, width: v.flowWidth },
+    line: { color: palette.line }, missing: '#808080', grid: { color: v.networkGridColor || palette.grid, spacing: v.networkGridSpacing },
     text: { color: v.networkTextColor || palette.text,
       font: `${v.networkFont || 'IBM Plex Sans'}, system-ui, sans-serif`, size: v.networkFontSize,
       halo: v.networkLabelHalo },
-    focus: { hover: v.hoverColor || palette.hover, selected: v.selectionColor || palette.selected, glow: v.hoverWidth, dim: v.unselectedAlpha,
-      grow: v.hoverScale },
+    focus: focusOf(v, palette),
     earth: { ground: palette.surface }, dash: v.dashPeriod,
   };
 }
+/** The ocean under a map, where it fills its land over it: the color chosen, else the palette's water. */
+export const oceanOf = (v: Preferences, palette: Palette = tokens) => v.networkOceanColor || palette.water;
 /** Whether `space` places positions on the earth, as a map or a globe. */
 export const earthSpace = (space: unknown) => space === 'earth' || record(space)?.earth !== undefined;
 /** The native position fields for a coordinate space. */
@@ -162,8 +173,8 @@ export interface MappingSource {
 
 /** The coordinate space after browser and case inheritance, shared by scene sizing and the mapping settings. */
 export function networkSpace(geographic: boolean, userDefaults: SavedViews = {}, caseOverrides: SavedViews = {}): NonNullable<Scene['space']> {
-  return (record(caseOverrides.network)?.space ?? record(userDefaults.network)?.space
-    ?? (geographic ? { earth: { projection: 'mercator' } } : 'plane')) as NonNullable<Scene['space']>;
+  return normalizeSpace(record(caseOverrides.network)?.space ?? record(userDefaults.network)?.space
+    ?? (geographic ? { earth: { projection: 'mercator' } } : 'plane'))!;
 }
 
 export function resolveNetwork({ source, preferences: v, theme = networkTheme(v), userDefaults = {}, caseOverrides = {} }: {
@@ -175,6 +186,9 @@ export function resolveNetwork({ source, preferences: v, theme = networkTheme(v)
   const resolved = resolveMappings(catalog, userDefaults.network, caseOverrides.network, target => source.fields(target), !!source.simulation);
   const measure = source.measure ?? { output: 'Vm', basis: 'value' as const };
   theme = mergeTheme(theme, resolved.theme);
+  // Comets keep the ground a view's own theme sets, unless a comet color is chosen.
+  if (!v.flowColor && record(resolved.theme.flow)?.color === undefined && theme.background !== undefined)
+    theme = { ...theme, flow: { ...theme.flow, color: theme.background } };
   const position = positionOf(earthSpace(space) ? 'geographic' : 'network');
   const { radius, width } = fittedSizes(source.drawing, theme, v.networkMinRadius);
   const height = source.drawing?.height ?? 0;

@@ -1,6 +1,6 @@
 import type { Scene, Theme } from 'latkit';
 import { record, type ElementTarget, type FieldInfo } from '@gridkit/library';
-import { optionIssue, fieldsIn, mergeTheme, readMark, type MarkDefinition, type Diagnostic } from '../domain/views.js';
+import { optionIssue, expressionIssue, fieldsIn, mergeTheme, normalizeSpace, readMark, type MarkDefinition, type Diagnostic } from '../domain/views.js';
 import { numericConstraint, numericIssue } from './numeric.js';
 import { measureOf } from '../domain/measure.js';
 
@@ -24,7 +24,7 @@ export function resolveMappings(defaults: readonly MarkDefinition[], user: unkno
     const report = (at: string, message: string, code: Diagnostic['code'] = 'invalid') => diagnostics.push({ path: at, message, code });
     if (!data) { report(path, 'Expected view mappings.'); continue; }
     for (const key of Object.keys(data)) if (!['space', 'theme', 'marks'].includes(key)) report(`${path}.${key}`, 'Unrecognized view option.', 'unsupported');
-    if (data.space !== undefined) space = data.space as Scene['space'];
+    if (data.space !== undefined) space = normalizeSpace(data.space);
     if (data.theme !== undefined) {
       if (record(data.theme)) theme = mergeTheme(theme, record(data.theme)!);
       else report(`${path}.theme`, 'Invalid theme; using the inherited theme.');
@@ -43,7 +43,7 @@ export function resolveMappings(defaults: readonly MarkDefinition[], user: unkno
       const options: Record<string, unknown> = { ...base?.options };
       const available = new Map(fields(mark.target).map(field => [field.id, field]));
       for (const [key, value] of Object.entries(mark.options)) {
-        const issue = optionIssue(key) ?? numericIssue(value, numericConstraint(key));
+        const issue = optionIssue(key) ?? expressionIssue(value) ?? numericIssue(value, numericConstraint(key));
         if (issue) { report(`${at}.options.${key}`, issue); continue; }
         const read = fieldsIn(value);
         if (!simulation && read.some(id => id.startsWith('simulation.'))) continue;

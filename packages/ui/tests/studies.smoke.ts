@@ -26,7 +26,8 @@ describe('studies GridKit runs', { timeout: 300_000 }, () => {
     const document = await open(name), duration = 2;
     const study: Study = { tmax: duration, dt_monitor: 0.002, events: [
       { type: 'fault_on', time: 0.5, bus: faulted, R: 0.001, X: 0.02 }, { type: 'fault_off', time: 0.65, bus: faulted }] };
-    const { channels, ...request } = compile(document, study), run = solver.start(request);
+    // The branches' real power, as a flow mapped to it asks every run to record.
+    const { channels, ...request } = compile(document, study, [{ collection: 'devices', class: 'Branch', output: 'p1' }]), run = solver.start(request);
     const voltages = channels.filter(channel => channel.output === 'Vm'), ids = voltages.map(channel => channel.column);
     for await (const update of run.updates()) if (update.progress) break;
     // Rows wait for what is still to come, and end with the run.
@@ -43,19 +44,27 @@ describe('studies GridKit runs', { timeout: 300_000 }, () => {
     expect(voltages).toHaveLength(document.rows('buses').length);
     expect(await streamed).toBe(final.progress!.rows);
 
-    // Every column this UI compiled is one GridKit recorded.
-    const everything = channels.map(channel => channel.column);
+    // Every column this UI compiled is one GridKit recorded, the branches' power among them, which carries the case's flows.
+    const everything = channels.map(channel => channel.column), powers = channels.filter(channel => channel.output === 'p1').map(channel => channel.column);
     await reader.rows({ columns: everything, at: 0, count: 1, maxBytes: 8*1024*1024 });
-    // Coarse tiles of the whole run keep the native recording's minimum exactly.
+    expect(powers).toHaveLength(document.rows('devices').filter(row => row.value.class === 'Branch').length);
+    const { samples: flows } = await reader.rows({ columns: powers, at: 0, count: 1, maxBytes: 8 * (1 + powers.length) });
+    expect(Math.max(...[...flows.values].map(Math.abs)), 'The branches carry power.').toBeGreaterThan(0.01);
+    // The coarsest level the run holds keeps the native recording's minimum exactly: its whole buckets in a few entries, and the rows
+    // past them, as latkit reads them, from level 0.
+    const recorded = final.progress!.rows;
+    let level = 0;
+    while (8 ** (level + 1) <= recorded) level++;
+    expect(level, 'The run reaches a coarse level.').toBeGreaterThan(0);
+    const count = Math.floor(recorded / 8 ** level), past = recorded - count * 8 ** level;
+    const { block } = await reader.entries({ columns: ids, level, first: 0, count, maxBytes: 16 * count * (1 + ids.length) });
+    if (block.kind !== 'envelope') throw new Error('A coarse level reads as an envelope.');
     const least = new Float64Array(ids.length).fill(Infinity);
-    let coarse = 0;
-    const summary = await reader.summary({ columns: ids, range: null, resolution: 64, maxBytes: 4*1024*1024 });
-    for await (const { level, block } of summary.pages()) {
-      if (level) coarse++;
-      const values = block.kind === 'samples' ? block.values : block.minimum;
-      for (const [index, value] of values.entries()) least[index % ids.length] = Math.min(least[index % ids.length]!, value);
+    for (const [index, value] of block.minimum.entries()) least[index % ids.length] = Math.min(least[index % ids.length]!, value);
+    if (past) {
+      const { samples: tail } = await reader.rows({ columns: ids, from: count * 8 ** level, count: past, maxBytes: 8 * past * (1 + ids.length) });
+      for (const [index, value] of tail.values.entries()) least[index % ids.length] = Math.min(least[index % ids.length]!, value);
     }
-    expect(coarse, 'The whole run is drawn from the pyramid.').toBeGreaterThan(0);
     const { samples: initial } = await reader.rows({ columns: ids, at: 0, count: 1, maxBytes: 1024*1024 });
     const column = voltages.findIndex(channel => channel.label === String(faulted));
     expect(initial.values[column]! - least[column]!, 'The faulted bus shows a voltage drop.').toBeGreaterThan(0.05);
@@ -86,7 +95,7 @@ describe('studies GridKit runs', { timeout: 300_000 }, () => {
         { signal_id: 2, name: 'Current real' }, { signal_id: 3, name: 'Current imaginary' },
       ],
     })));
-    const { study, model } = compile(document, { tmax: 0.1, dt_monitor: 0.01 });
+    const { study, model } = compile(document, { tmax: 0.1, dt_monitor: 0.01 }, []);
     const final = await finish(solver.start({ study, model }).updates());
     expect(final.state, final.state === 'failed' ? final.error.message : '').toBe('completed');
   });

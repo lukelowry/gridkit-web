@@ -60,11 +60,16 @@
   bind:this={popup} {@attach mount} onkeydown={keydown}
   oncontextmenu={event => event.preventDefault()}
   onpointermove={event => { if ((event.movementX || event.movementY) && event.target instanceof Element) event.target.closest<HTMLElement>('[role="menuitem"]')?.focus({ preventScroll: true }); }}
-  onbeforetoggle={event => { if (event.newState === 'open') { opener = anchor?.querySelector('button') ?? document.activeElement; closed = false; expanded = true; typed = ''; } }}
+  onbeforetoggle={event => {
+    if (event.newState === 'open') { opener = anchor?.querySelector('button') ?? document.activeElement; closed = false; expanded = true; typed = ''; }
+    // A fast close can coalesce away the opening toggle event. Its opening key must not carry into the next click.
+    else initial = 'first';
+  }}
   ontoggle={event => {
     if (event.newState === 'closed') close(false);
     else {
-      if (popup.matches(':popover-open') && !popup.contains(document.activeElement)) focusItem(initial === 'last');
+      // Chromium can focus the popover itself; a menu opens on its first or last item.
+      if (popup.matches(':popover-open') && (document.activeElement === popup || !popup.contains(document.activeElement))) focusItem(initial === 'last');
       initial = 'first';
     }
   }}>

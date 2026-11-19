@@ -31,6 +31,16 @@ describe('case files', () => {
     expect(JSON.parse(text)).toEqual(value);
   });
 
+  it('writes whole reals the same in any runtime, however large, and leaves text that looks like one alone', () => {
+    const value = parseCase(JSON.stringify({ ...fixture, header: { ...fixture.header, case_comments: '\u00011.0' }, devices: [
+      { class: 'LoadZ', id: 'load', ports: { bus: 1 }, params: { R: 1e21, X: -3 } },
+    ] }));
+    const text = serializeCase(value);
+    expect(text).toContain('"R": 1e+21');
+    expect(text).toContain('"X": -3.0');
+    expect(JSON.parse(text)).toEqual(value);
+  });
+
   it.each(['{', '{}', 'null', '[]'])('rejects an unreadable case: %s', text => {
     expect(() => parseCase(text)).toThrow();
   });

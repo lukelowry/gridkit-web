@@ -53,6 +53,6 @@ Also by the author: [gridkit-studio](https://github.com/lukelowry/gridkit-studio
 
 ## License
 
-[BSD-3-Clause](LICENSE). The solver image also carries the licenses in `services/solver/licenses`.
+[BSD-3-Clause](LICENSE).
 
 Uses [GridKit](https://github.com/ORNL/GridKit) from Oak Ridge National Laboratory.

@@ -1,11 +1,12 @@
 import { serializeCaseRow, type Bus, type Device } from '../case.js';
 import { writePorts } from '../connections.js';
 import type { CaseDocument } from '../document.js';
-import { recordedOutputs } from './channels.js';
+import { recordedOutputs, type WantedOutput } from './channels.js';
 import { runDefaults } from './study.js';
 import type { Channel, Compiled, Study } from './index.js';
 
-export function compile(document: CaseDocument, study: Study): Compiled {
+/** `document` as GridKit runs `study`, recording what it always records and what `wanted` names. */
+export function compile(document: CaseDocument, study: Study, wanted: readonly WantedOutput[]): Compiled {
   const { header, params } = document.info;
   const rows = { buses: document.rows('buses'), devices: document.rows('devices'), signals: document.rows('signals') };
   const numbers = new Map([...rows.buses, ...rows.signals].map(row => [row.ref.id, document.number(row.ref)]));
@@ -21,7 +22,7 @@ export function compile(document: CaseDocument, study: Study): Compiled {
       if (/[,\r\n]/.test(label)) throw new Error(`GridKit cannot record ${label}: identifiers cannot contain commas or newlines.`);
       // GridKit labels bus columns by name, which need not be unique (WECC240 repeats names); the number is.
       if (collection === 'buses') value.name = label;
-      const outputs = [...recordedOutputs(row)].sort((a, b) => a.id < b.id ? -1 : 1);
+      const outputs = [...recordedOutputs(row, wanted)].sort((a, b) => a.id < b.id ? -1 : 1);
       value.mon = outputs.map(output => output.id);
       // GridKit writes every bus class's columns under Bus.
       const scope = collection === 'buses' ? 'Bus' : String(value.class);

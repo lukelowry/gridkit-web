@@ -15,7 +15,8 @@ describe('the UI container', () => {
     expect(await (await fetch(new URL('config.json', page))).json()).toEqual({});
     expect((await fetch(new URL('assets/missing.js', page))).status).toBe(404);
     expect((await fetch(new URL('api/missing/', page))).status).toBe(404);
-    expect((await fetch(mounted('solver'))).status).toBe(204);
+    // The solver answers its GridKit versions.
+    expect(await (await fetch(mounted('solver'))).json()).toMatchObject({ GridKit: expect.any(String) });
     expect((await fetch(`${mounted('solver')}runs/missing`, { headers: { Origin: 'https://foreign.test' } })).status).toBe(403);
   });
 

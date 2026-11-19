@@ -53,7 +53,8 @@ export function fieldsIn(value: unknown): readonly string[] {
     else if (record(node)) {
       const expression = record(node)!;
       if (typeof expression.field === 'string') {
-        if (expression.from == null) fields.add(expression.field);
+        if (typeof expression.of === 'string') fields.add(expression.of);
+        else if (expression.from == null) fields.add(expression.field);
         return;
       }
       for (const [key, child] of Object.entries(expression)) {
@@ -64,6 +65,17 @@ export function fieldsIn(value: unknown): readonly string[] {
   }
   visit(value);
   return [...fields];
+}
+/** Latkit reads through a reference or joins another dataset; those two forms cannot be combined. */
+export function expressionIssue(value: unknown): string | null {
+  const node = record(value);
+  if (node && typeof node.field === 'string' && node.field.startsWith('simulation.') && node.of != null)
+    return 'Map simulation fields on their own elements; simulation joins cannot also read through a reference.';
+  for (const child of Array.isArray(value) ? value : node ? Object.values(node) : []) {
+    const issue = expressionIssue(child);
+    if (issue) return issue;
+  }
+  return null;
 }
 function localField(value: unknown): string | null {
   if (typeof value === 'string' && value.startsWith('$')) return value.slice(1);
@@ -91,8 +103,41 @@ export function readMark(value: unknown): MarkDefinition | null {
   return mark as unknown as MarkDefinition;
 }
 
+/** Read older grid options without changing the saved mappings or their exported case. */
+export function normalizeSpace(value: unknown): Scene['space'] {
+  const space = record(value);
+  if (!space) return value as Scene['space'];
+  const next = { ...space };
+  for (const kind of ['earth', 'plane']) {
+    const options = record(space[kind]);
+    if (!options) continue;
+    const { graticule, ...current } = options;
+    let grid = current.grid ?? (graticule === undefined ? undefined : graticule ? 'lines' : 'off');
+    const pattern = record(grid);
+    if (pattern) {
+      grid = { ...pattern };
+      for (const style of ['lines', 'dots']) {
+        const settings = record(pattern[style]);
+        if (!settings || !Object.hasOwn(settings, 'pitch')) continue;
+        const { pitch, ...rest } = settings;
+        (grid as Record<string, unknown>)[style] = { ...rest, step: rest.step ?? pitch };
+      }
+    }
+    next[kind] = { ...current, ...grid === undefined ? {} : { grid } };
+  }
+  return next as Scene['space'];
+}
+
+function normalizeTheme(input: Exclude<Theme, string> | Record<string, unknown>): Exclude<Theme, string> {
+  const { gridSpacing, ...theme } = input as Record<string, unknown>;
+  const grid = typeof theme.grid === 'string' ? { color: theme.grid } : record(theme.grid);
+  if (grid || gridSpacing !== undefined) theme.grid = { ...grid,
+    ...grid?.spacing === undefined && gridSpacing !== undefined ? { spacing: gridSpacing } : {} };
+  return theme as Exclude<Theme, string>;
+}
+
 /** Theme groups inherit independently, just as options inherit within each group in latkit. */
-export function mergeTheme(base: Exclude<Theme, string>, override: Exclude<Theme, string>): Exclude<Theme, string> {
+export function mergeTheme(base: Exclude<Theme, string>, override: Exclude<Theme, string> | Record<string, unknown>): Exclude<Theme, string> {
   function merge(before: unknown, after: unknown): unknown {
     const group = record(after);
     if (!group || Object.hasOwn(group, 'units')) return after;
@@ -100,7 +145,7 @@ export function mergeTheme(base: Exclude<Theme, string>, override: Exclude<Theme
     for (const [key, value] of Object.entries(group)) result[key] = merge(result[key], value);
     return result;
   }
-  return merge(base, override) as Exclude<Theme, string>;
+  return merge(normalizeTheme(base), normalizeTheme(override)) as Exclude<Theme, string>;
 }
 
 /** Edits to `saved` views, each validated as it is made; the views keep the catalog's marks until one is edited. */

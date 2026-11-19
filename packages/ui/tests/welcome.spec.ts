@@ -48,3 +48,20 @@ test('welcome defers graphics, results workers and optional panels until needed'
   await expect(page.getByLabel('Duration', { exact: true })).toBeVisible();
   expect(requests.some(path => /SolverSettings-/.test(path))).toBe(true);
 });
+
+test('a page whose files were replaced since it opened says so, and offers the page that has them', async ({ page }) => {
+  await page.route('**/config.json', route => route.fulfill({ json: {} }));
+  await page.route('**/api/**', route => route.fulfill({ status: 404 }));
+  await page.goto('/');
+  await page.getByLabel('Open case file', { exact: true }).setInputFiles({ name: 'example.case.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(fixture)) });
+  // Redeploy: the index names a new entry script and old chunks 404.
+  await page.route(url => url.pathname === '/', route => route.request().isNavigationRequest() ? route.continue()
+    : route.fulfill({ contentType: 'text/html', body: '<!doctype html><script type="module" src="./assets/index-next.js"></script>' }));
+  await page.route('**/assets/SolverSettings-*', route => route.fulfill({ status: 404 }));
+  await page.getByRole('button', { name: 'Solver', exact: true }).click();
+  await expect(page.getByRole('alert').filter({ hasText: 'GridKit Web was updated since this page opened.' })).toHaveCount(1);
+  const reloaded = page.waitForRequest(request => request.isNavigationRequest());
+  await page.getByRole('button', { name: 'Reload application', exact: true }).click();
+  await reloaded;
+  await expect(page.getByRole('alert')).toHaveCount(0);
+});

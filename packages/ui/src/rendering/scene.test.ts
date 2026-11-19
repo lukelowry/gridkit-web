@@ -41,18 +41,35 @@ it('draws branches out of service dashed and muted in their own mark, under a ma
 it('draws mappings over the catalog structure, with preferences as theme, controls, and layout', () => {
   const document = new CaseDocument(fixture());
   const network = scene(document);
-  expect(network.scene.space).toEqual({ earth: { projection: 'mercator', graticule: true, atmosphere: false } });
+  expect(network.scene.space).toEqual({ earth: { projection: 'mercator', grid: 'lines', atmosphere: false } });
   expect(mark(network, 'buses')).toMatchObject({
     vertices: ['case', 'Bus'], position: ['$placement.geographic.longitude', '$placement.geographic.latitude'], color: level,
   });
   expect(mark(network, 'branches')).toMatchObject({ edges: ['case', 'Branch'], ends: ['ports.bus1', 'ports.bus2'] });
   expect(network.scene.theme).toMatchObject({ edge: { color: null } });
-  expect(network.scene.theme).toHaveProperty('gridSpacing', 24);
-  expect(network.scene.controls).toEqual({ gestures: { twist: 'turn', slide: 'tilt' }, keyboard: true, hover: true, pickRadius: 6, cycle: false, motion: 'full' });
+  expect(network.scene.theme).toHaveProperty('grid.spacing', 24);
+  expect(network.scene.controls).toEqual({ gestures: { twist: 'turn', slide: 'tilt' }, keyboard: true, hover: true, pickRadius: 6, cycle: false, motion: 'full', fps: 30 });
   // With zoom on Ctrl or Cmd, the wheel scrolls the view, as a trackpad does.
   const modifier = scene(document, createPreferences(JSON.stringify({ wheel: 'modifier' })));
   expect(modifier.scene.controls).toMatchObject({ gestures: { wheel: 'pan', 'control+wheel': 'zoom', 'meta+wheel': 'zoom' } });
+  // Playback and comets draw a view at the frame rate chosen.
+  expect(scene(document, createPreferences(JSON.stringify({ frameRate: '60' }))).scene.controls).toMatchObject({ fps: 60 });
 
+});
+
+it('runs parallel circuits side by side and draws comets as the preferences set them, in high contrast too', () => {
+  const document = new CaseDocument(fixture());
+  const theme = (stored: object = {}) => scene(document, createPreferences(JSON.stringify(stored))).scene.theme;
+  expect(theme()).toMatchObject({ edge: { parallel: { converge: 'fan', gap: 2 } }, flow: { spacing: 64, length: 24, width: 4 } });
+  // Comets take the ground's color unless chosen, which every stroke is fitted to read on, a custom ground too.
+  expect(JSON.stringify(theme())).toContain('"flow":{"color":"var(--color-bg)"');
+  expect(theme({ networkBackground: '#102030' })).toMatchObject({ background: '#102030', flow: { color: '#102030' } });
+  const viewGround = documentWith({ theme: { background: '#203040' } });
+  expect(scene(viewGround).scene.theme).toMatchObject({ background: '#203040', flow: { color: '#203040' } });
+  expect(theme({ parallelBranches: 'straight', parallelGap: 1.5, flowColor: '#ff0000', flowSpacing: 40 }))
+    .toMatchObject({ edge: { parallel: { converge: 'straight', gap: 1.5 } }, flow: { color: '#ff0000', spacing: 40 } });
+  expect(theme({ parallelBranches: 'overlap' })).toMatchObject({ edge: { parallel: null } });
+  expect(theme({ contrast: 'high' })).toMatchObject({ edge: { width: 2.5, parallel: { converge: 'fan' } } });
 });
 
 it('sizes the network in latkit\'s lengths, and orders overlapping buses by kV alongside layout', () => {
@@ -99,7 +116,7 @@ it('applies browser mappings and interaction preferences to the Network', () => 
   const network = scene(document, preferences);
   expect(mark(network, 'buses')).toMatchObject({ marker: 'diamond', radius: { scale: [3, 10], value: '$init.Vr' }, label: null });
   expect(network.scene.controls).toMatchObject({ pickRadius: 15 });
-  expect(network.scene.theme).toHaveProperty('gridSpacing', 64);
+  expect(network.scene.theme).toHaveProperty('grid.spacing', 64);
 });
 
 it('labels numeric fields as latkit writes numbers, and shows a bus class mark only for its rows', () => {
@@ -159,11 +176,18 @@ it('inherits voltage color and height while preserving case overrides over brows
 
 it('draws geography under the case and applies the globe, grid, and pole choices', () => {
   const document = new CaseDocument(fixture()), preferences = createPreferences(JSON.stringify({ networkGrid: false, networkPoles: true }));
-  const geography = [['geography-0', 'polygons'], ['geography-1', 'lines']] as const;
+  const geography = [{ table: ['geography-0', 'land'], fill: true }, { table: ['geography-1', 'lines'], fill: false }] as const;
   const network = networkScene({ document, preferences, mappings: {}, geographic: true, globe: true, geography });
-  expect(network.scene.space).toEqual({ earth: { projection: 'globe', graticule: false, atmosphere: false } });
-  expect(network.scene.marks!.slice(0, 2)).toEqual(geography.map(table => ({ lines: table, width: 1, pick: false })));
-  expect(network.scene.theme).toMatchObject({ line: { color: 'var(--color-graph-line)' } });
+  expect(network.scene.space).toEqual({ earth: { projection: 'globe', grid: 'off', atmosphere: false } });
+  // The land fills under the map's lines, in the ground's color, over the ocean the earth's ground becomes.
+  expect(network.scene.marks!.slice(0, 2)).toEqual([{ areas: ['geography-0', 'land'], pick: false }, { lines: ['geography-1', 'lines'], width: 1, pick: false }]);
+  expect(network.scene.theme).toMatchObject({ line: { color: 'var(--color-graph-line)' },
+    earth: { ground: 'var(--color-graph-water)' }, area: { color: 'var(--color-surface-2)' } });
+  const chosen = createPreferences(JSON.stringify({ networkOceanColor: '#103050' }));
+  expect(networkScene({ document, preferences: chosen, mappings: {}, geographic: true, geography }).scene.theme).toMatchObject({ earth: { ground: '#103050' } });
+  // Without its land, a map keeps the land's ground.
+  expect(networkScene({ document, preferences, mappings: {}, geographic: true, geography: [geography[1]] }).scene.theme)
+    .toMatchObject({ earth: { ground: 'var(--color-surface-2)' } });
   // Poles rise from the ground under the case's marks.
   expect(network.entries.slice(0, 3)).toEqual([null, null, null]);
   expect(network.scene.marks![2]).toMatchObject({ edges: ['case', 'Bus'], poles: true, pick: false });
@@ -186,8 +210,8 @@ it('draws from the ground up, buses over the branches and poles that meet them',
   });
 });
 
-const dark = { background: '#060404', vertex: '#d65b65', line: '#6d6767', text: '#e8e3e3', grid: '#282322', surface: '#1a1514', raised: '#140f0f', hover: '#e8e3e380', selected: '#e8e3e3' };
-const light = { background: '#f8f5f4', vertex: '#5b1c22', line: '#8a8584', text: '#1f1a1a', grid: '#ddd8d7', surface: '#ede9e8', raised: '#faf8f7', hover: '#1f1a1a80', selected: '#1f1a1a' };
+const dark = { background: '#060404', vertex: '#d65b65', line: '#6d6767', text: '#e8e3e3', grid: '#282322', surface: '#1a1514', water: '#091821', raised: '#140f0f', hover: '#e8e3e380', selected: '#e8e3e3' };
+const light = { background: '#f8f5f4', vertex: '#5b1c22', line: '#8a8584', text: '#1f1a1a', grid: '#ddd8d7', surface: '#ede9e8', water: '#deeef8', raised: '#faf8f7', hover: '#1f1a1a80', selected: '#1f1a1a' };
 const colorsOf = (map: unknown) => (map as { colors: (string | [number, string])[] }).colors.map(entry => Array.isArray(entry) ? entry[1] : entry);
 const readsOn = (colors: readonly string[], grounds: readonly string[], floor: number) => {
   for (const color of colors) for (const ground of grounds) expect(contrast(rgbOf(color)!, rgbOf(ground)!)).toBeGreaterThanOrEqual(floor);
@@ -208,16 +232,19 @@ it('draws voltage levels in bands that read on each ground, from the background\
     const network = networkScene({ document: new CaseDocument(fixture()), preferences: createPreferences(JSON.stringify({ theme })), palette, mappings: {}, geographic: true });
     const color = mark(network, 'buses')!.color as { colormap: unknown; domain: unknown };
     expect(color).toMatchObject({ colormap: voltagePalette(theme === 'dark'), domain: [60, 800] });
-    readsOn(colorsOf(color.colormap), [palette.background, palette.surface], 4.5);
+    // Over land and over the ocean alike.
+    readsOn(colorsOf(color.colormap), [palette.background, palette.surface, palette.water], 4.5);
   }
 });
 
 it('keeps the color of a missing value at the floor every colormap keeps', () => {
   for (const [palette, theme, floor] of [[light, 'light', 4.5], [dark, 'dark', 4.5], [light, 'light', 7]] as const) {
     const preferences = createPreferences(JSON.stringify({ theme, contrast: floor === 7 ? 'high' : 'system' }));
-    const network = networkScene({ document: new CaseDocument(fixture()), preferences, palette, mappings: {}, geographic: true });
+    // A map's ocean, under its land, is a ground too.
+    const network = networkScene({ document: new CaseDocument(fixture()), preferences, palette, mappings: {}, geographic: true,
+      geography: [{ table: ['geography-0', 'land'], fill: true }] });
     const missing = rgbOf(String(network.scene.theme && typeof network.scene.theme === 'object' ? network.scene.theme.missing : ''))!;
-    for (const ground of [palette.background, palette.surface]) expect(contrast(missing, rgbOf(ground)!)).toBeGreaterThanOrEqual(floor);
+    for (const ground of [palette.background, palette.surface, palette.water]) expect(contrast(missing, rgbOf(ground)!)).toBeGreaterThanOrEqual(floor);
   }
 });
 
@@ -226,7 +253,7 @@ it('keeps the color of a missing value at the floor every colormap keeps', () =>
 it('applies Network atmosphere and selection preferences', () => {
   const preferences = createPreferences(JSON.stringify({ networkAtmosphere: true, cycle: true }));
   const network = scene(new CaseDocument(fixture()), preferences);
-  expect(network.scene.space).toEqual({ earth: { projection: 'mercator', graticule: true, atmosphere: true } });
+  expect(network.scene.space).toEqual({ earth: { projection: 'mercator', grid: 'lines', atmosphere: true } });
   expect(network.scene.controls).toMatchObject({ cycle: true });
 });
 

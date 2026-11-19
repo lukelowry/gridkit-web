@@ -1,7 +1,7 @@
-import { isTerminal, runStates, SolverError, type RunId } from '../index.js';
+import { isTerminal, runStates, SolverError, type Engine, type RunId } from '../index.js';
 import type { RunStatus } from '../protocol.js';
 import type { Backend, Report } from '../serve.js';
-import { rowsReply, summaryReply } from './frames.js';
+import { planesReply } from './frames.js';
 import type { Options } from './index.js';
 
 /** The failure a service answered with, as `{ code, message }`, else one naming its status. */
@@ -9,11 +9,26 @@ async function failureOf(response: Response) {
   const { code, message } = await response.json().catch(() => ({})) as { code?: unknown; message?: unknown };
   return new SolverError(typeof code === 'string' ? code : 'unavailable', typeof message === 'string' ? message : `The solver answered ${response.status}.`);
 }
-/** What the service answered; nothing it answers is kept by a cache. */
-async function call(url: string, init?: RequestInit) {
-  const response = await fetch(url, { ...init, cache: 'no-store' });
-  if (!response.ok) throw await failureOf(response);
-  return response;
+/** Retry window and backoff for requests safe to repeat. */
+const patience = 30_000, waits = [250, 500, 1_000, 2_000];
+const wait = (ms: number, signal?: AbortSignal | null) => new Promise<void>((resolve, reject) => {
+  const abort = () => { clearTimeout(timer); reject(signal!.reason); };
+  const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(); }, ms);
+  signal?.addEventListener('abort', abort, { once: true });
+});
+/** Fetches uncached. With `again`, retries a request safe to repeat on a network error or 502/504, for up to `patience`. */
+async function call(url: string, init: RequestInit = {}, again = false) {
+  for (let started = Date.now(), tries = 0; ; tries++) {
+    const last = !again || Date.now() - started >= patience;
+    const response = await fetch(url, { ...init, cache: 'no-store' }).catch((cause: unknown) => {
+      if (last || init.signal?.aborted) throw cause;
+      return null;
+    });
+    if (response?.ok) return response;
+    if (response && (last || (response.status !== 502 && response.status !== 504))) throw await failureOf(response);
+    void response?.body?.cancel();
+    await wait(waits[Math.min(tries, waits.length - 1)]!, init.signal);
+  }
 }
 const post = (body: unknown, signal: AbortSignal): RequestInit =>
   ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
@@ -46,8 +61,8 @@ export async function open({ base }: Options, report: Report): Promise<Backend |
   base = base.replace(/\/*$/, '/');
   const root = await fetch(base, { cache: 'no-store' });
   if (!root.ok && root.status !== 404) throw await failureOf(root);
-  void root.body?.cancel();
-  if (root.status === 404 || root.headers.get('content-type')?.startsWith('text/html')) return null;
+  if (root.status === 404 || root.headers.get('content-type')?.startsWith('text/html')) { void root.body?.cancel(); return null; }
+  const engine = await root.json() as Engine;
 
   const life = new AbortController();
   /** Each run this page started that the service may hold: its upload, then its address once the service accepts it. */
@@ -62,7 +77,7 @@ export async function open({ base }: Options, report: Report): Promise<Backend |
   const follow = async (run: RunId, at: string) => {
     try {
       for (let sequence = -1; ;) {
-        const status = statusOf(await (await call(`${at}?after=${sequence}`, { signal: life.signal })).json().catch(() => null));
+        const status = statusOf(await (await call(`${at}?after=${sequence}`, { signal: life.signal }, true)).json().catch(() => null));
         sequence = status.sequence;
         report.status(run, status);
         if (isTerminal(status.state)) return;
@@ -70,6 +85,7 @@ export async function open({ base }: Options, report: Report): Promise<Backend |
     } catch (cause) { if (!life.signal.aborted) report.lost(run, cause); }
   };
   return {
+    engine,
     async start(run, { study, model }) {
       const held: { uploading: AbortController; address?: string } = { uploading: new AbortController() };
       runs.set(run, held);
@@ -94,10 +110,10 @@ export async function open({ base }: Options, report: Report): Promise<Backend |
       const held = runs.get(run);
       if (!held) return;
       if (!held.address) { held.uploading.abort(); return; }
-      await call(`${held.address}/cancel`, { method: 'POST' });
+      await call(`${held.address}/cancel`, { method: 'POST', signal: life.signal }, true);
     },
-    rows: async (run, query, signal) => rowsReply(await call(`${address(run)}/rows`, post(query, signal)), query),
-    summary: async (run, query, signal) => summaryReply(await call(`${address(run)}/summary`, post(query, signal)), query),
+    rows: async (run, query, signal) => planesReply(await call(`${address(run)}/rows`, post(query, signal), true), query),
+    entries: async (run, query, signal) => planesReply(await call(`${address(run)}/entries`, post(query, signal), true), query),
     // The service writes each file; the browser downloads it from there, and the page holds none of it.
     artifact: async (run, name) => ({ header: { href: `${address(run)}/${name}` }, parts: [] }),
     close() { life.abort(); runs.clear(); },

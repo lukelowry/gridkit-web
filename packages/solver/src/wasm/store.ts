@@ -132,6 +132,9 @@ export class Store {
     });
   }
 
+  /** How many levels hold a whole entry: an entries read asks for one of them. */
+  get levels() { return this.#files.length; }
+
   /** `rows` entries of one level from `first`: times then values at level 0, starts, ends, minima and maxima above it. */
   planes(level: number, first: number, rows: number, columns: readonly number[]): Float64Array<ArrayBuffer> {
     const width = this.#width, c = columns.length, stride = level ? 2 + 2 * width : width + 1;

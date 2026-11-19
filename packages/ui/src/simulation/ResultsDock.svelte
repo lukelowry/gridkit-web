@@ -3,12 +3,14 @@
   import type { ElementRef } from '@gridkit/library';
   import type { Preferences } from '../preferences/definitions.js';
   import type { PreferencesState } from '../preferences/state.svelte.js';
-  import type { PlotAxis } from './plot.js';
+  import type { PlotAxis, PlotData } from './plot.js';
   import type { ArtifactName, TimeRange } from '@gridkit/solver';
   import type { RunSession } from './run.svelte.js';
   import { save } from '../ui/files.js';
   import { eventActions } from './solver-fields.js';
   import { speeds } from './playhead.svelte.js';
+  import { channelsOf, pinnedSeriesLimit } from './channels.js';
+  import { sameReference } from '../domain/entries.js';
   import { defaultBand, measureUnit, percentable } from '../domain/measure.js';
   import { rampCss, scaleTicks, type ColorScale } from '../ui/ramps.js';
   import { notify } from '../ui/toasts.svelte.js';
@@ -37,13 +39,18 @@
     bottom: { to: 'right', label: 'Dock results on the right', icon: 'dock-right' },
     right: { to: 'bottom', label: 'Dock results at the bottom', icon: 'dock-bottom' },
   } as const;
-  const plot = $derived(run.plot);
+  /** The plot last drawn here, whichever run it was of. */
+  let drawn = $state.raw<PlotData>();
+  $effect.pre(() => { if (run.plot) drawn = run.plot; });
+  // One plot for the dock, never one per run: while a new run prepares, the plot goes on drawing what the run before it drew, and
+  // the new run's results take over the same view as latkit can draw them, rather than starting the plot over.
+  const plot = $derived(run.plot ?? (run.busy && !run.channels.length ? drawn : undefined));
   const time = $derived(run.playhead.time);
   let detail = $state<{ label: string; value: string; at: string } | null>(null);
   let measured = $state.raw<PlotAxis | null>(null);
-  const axis = $derived(plot ? measured : null);
-  // The scrubber spans the plot's time axis and the times it shows, so each moment sits under the same moment on the plot.
-  const domain = $derived<TimeRange>(axis ? [axis.from, axis.to] : run.timeline);
+  // The scrubber spans the plot's time axis and the times it shows, so each moment sits under the same moment on the plot. Where the
+  // axis was last drawn holds while no plot is shown and across runs, so the rail stays put; its times are then the run's.
+  const domain = $derived<TimeRange>(plot && measured ? [measured.from, measured.to] : run.timeline);
   const span = $derived(Math.max(domain[1] - domain[0], Number.EPSILON));
   const fraction = (at: number) => Math.min(1, Math.max(0, (at - domain[0]) / span));
   const percent = (at: number) => `${fraction(at) * 100}%`;
@@ -51,14 +58,18 @@
   const seconds = (at: number) => at.toFixed(2);
   const deviating = $derived(run.basis !== 'value');
   const measuredFrom = $derived(run.reference ?? run.range[0]);
-  const unit = $derived(plot?.quantity.unit);
-  const displayUnit = $derived(plot ? measureUnit(unit, plot.basis) : '');
+  const unit = $derived(run.quantity?.unit);
+  const displayUnit = $derived(run.quantity ? measureUnit(unit, run.basis) : '');
+  const selectedChannel = $derived(run.quantity && selected ? channelsOf(run.quantity, [selected])[0] : undefined);
+  const canPin = $derived(!!selectedChannel && run.pinned.length < pinnedSeriesLimit && !run.pinned.some(ref => sameReference(ref, selected)));
+  $effect(() => { const session = run, ref = selected; untrack(() => session.focusPlot(ref)); });
   const scopes = $derived([...new Set(run.quantities.map(quantity => quantity.scope))]);
   const contentId = $props.id();
   let plotAttempt = $state(0);
   let plotView = $state<ResultsPlot>();
+  /** A plot that cannot draw starts again in a new view; results it could not read it reads again itself. */
   async function retryPlot() {
-    measured = null; plotAttempt++;
+    plotAttempt++;
     await tick();
     plotView?.focus();
   }
@@ -73,12 +84,13 @@
   $effect(() => { if (scrubber) scrubber.value = String(time); });
 </script>
 
-<svelte:document onvisibilitychange={() => { if (document.hidden) run.play(false); }} />
+<!-- A hidden tab stops playing back; a run still recording is followed again once the tab shows. -->
+<svelte:document onvisibilitychange={() => { if (document.hidden) run.playhead.pause(); }} />
 <section class={['results-dock', side]} aria-label="Simulation">
   <div class="results-toolbar">
     <div class="results-measure">
-      <select class="results-quantity" aria-label="Plot quantity" title={plot?.quantity.label}
-        disabled={!run.quantities.length} value={plot?.quantity.key ?? ''}
+      <select class="results-quantity" aria-label="Plot quantity" title={run.quantity?.label}
+        disabled={!run.quantities.length} value={run.quantity?.key ?? ''}
         onchange={event => run.select(event.currentTarget.value)}>
         <button type="button"><selectedcontent></selectedcontent></button>
         {#if !run.quantities.length}<option value="">{run.busy ? 'Preparing results…' : 'No quantities'}</option>{/if}
@@ -88,15 +100,15 @@
           </optgroup>
         {/each}
       </select>
-      {#if displayUnit}<span class="results-unit" aria-label={run.basis === 'value' ? displayUnit : `${run.basis === 'percent' ? 'Percent change' : 'Change'}, ${displayUnit}`}>
-        ({run.basis === 'percent' ? '% change' : `${run.basis === 'change' ? 'Δ ' : ''}${displayUnit}`})
+      {#if displayUnit}<span class="field-unit" aria-label={run.basis === 'value' ? displayUnit : `${run.basis === 'percent' ? 'Percent change' : 'Change'}, ${displayUnit}`}>
+        {run.basis === 'percent' ? '% change' : `${run.basis === 'change' ? 'Δ ' : ''}${displayUnit}`}
       </span>{/if}
     </div>
     <div class="results-panel-actions">
       <Popover label="Plot options" width={256} align="end">
         {#snippet trigger(popup)}<button class="c-icon-btn" aria-label="Plot options" title="Plot options" aria-haspopup="dialog" popovertarget={popup}><Icon name="more" /></button>{/snippet}
         {#snippet children(close)}
-          <fieldset class="c-options" disabled={!plot}>
+          <fieldset class="c-options" disabled={!run.quantity}>
             <legend>Display</legend>
             {#each [{ value: 'value', label: 'Value' }, { value: 'change', label: 'Change' }, { value: 'percent', label: 'Percent change' }] as choice (choice.value)}
               <label class="c-action" title={choice.value === 'percent' && !percentable(unit) ? 'Percent change is unavailable for angles.' : undefined}>
@@ -106,15 +118,27 @@
               </label>
             {/each}
           </fieldset>
+          <fieldset class="c-options" disabled={!run.quantity}>
+            <legend>Series</legend>
+            <label class="c-action"><input type="radio" name={`${contentId}-series`} checked={run.plotMode === 'all'}
+              onchange={() => run.setPlotMode('all')} />All series ({(run.quantity?.channels.length ?? 0).toLocaleString()})</label>
+            <label class="c-action"><input type="radio" name={`${contentId}-series`} checked={run.plotMode === 'focused'}
+              onchange={() => run.setPlotMode('focused')} />Selected and pinned</label>
+            <button class="c-action" type="button" disabled={!canPin} title={`Pin up to ${pinnedSeriesLimit} elements to compare their traces.`}
+              onclick={() => { if (selected) run.pinPlot(selected); }}>Pin selected element</button>
+            {#each run.pinned as ref (ref.id)}
+              <button class="c-action" type="button" aria-label={`Unpin ${ref.label}`} onclick={() => run.unpinPlot(ref)}><Icon name="close" />{ref.label}</button>
+            {/each}
+          </fieldset>
           {#if deviating}
             <div class="c-options" role="group" aria-label="Reference">
               <span class="c-options__label">Reference · {seconds(measuredFrom)} s</span>
               <button class="c-action" type="button" disabled={run.reference === null} onclick={() => { close(); run.measure(run.basis, null); }}><Icon name="reference" />From start</button>
-              <button class="c-action" type="button" disabled={!plot} onclick={() => { close(); run.measure(run.basis, run.playhead.time); }}><Icon name="reference" />From current time</button>
+              <button class="c-action" type="button" disabled={!run.recorded} onclick={() => { close(); run.measure(run.basis, run.playhead.time); }}><Icon name="reference" />From current time</button>
             </div>
           {/if}
           <div class="c-options">
-            <button class="c-action" type="button" disabled={!plot || run.live} onclick={() => { close(); run.follow(); }}><Icon name="play" />Follow live</button>
+            <button class="c-action" type="button" disabled={!run.busy || run.live} onclick={() => { close(); run.follow(); }}><Icon name="play" />Follow live</button>
             <button class="c-action" type="button" disabled={!plot} onclick={() => { close(); run.fit(); }}><Icon name="fit" />Fit plot</button>
           </div>
           {#if scale}
@@ -158,18 +182,24 @@
   <div id={contentId} class="results-content" hidden={collapsed && side === 'bottom'}>
     <!-- Controls stay visible while the plot uses the remaining height. -->
     <div class="results-body">
+      {#if run.plotMode === 'focused' && run.quantity}
+        <p class="series-count" role="status">{plot?.quantity.channels.length ?? 0} of {run.quantity.channels.length} series · selected and pinned</p>
+      {/if}
       {#if plot}
-        {#key plot.data}{#key plotAttempt}
-          <ResultsPlot bind:this={plotView} {selected} {hovered} {onselect} {onhover} ondetail={next => { detail = next; }} {plot} playhead={run.playhead} {preferences} onretry={retryPlot}
-            onseek={at => run.seek(at)} onviewport={(viewport, pixels, manual) => run.viewport(viewport, pixels, manual)} onaxis={next => { measured = next; }} />
-        {/key}{/key}
+        <!-- One view for the run: a new quantity, measure, or set of series changes what it draws, never the canvas. -->
+        {#key plotAttempt}
+          <ResultsPlot bind:this={plotView} {selected} {hovered} {onselect} {onhover} ondetail={next => { detail = next; }} {plot} opening={run.plotOpening}
+            playhead={run.playhead} {preferences} onretry={retryPlot} onseek={at => run.seek(at)} onviewport={viewport => run.viewport(viewport)} onaxis={next => { measured = next; }} />
+        {/key}
       {:else}
-        <p class="results-empty" role="status">{run.busy ? 'Preparing results…' : 'No simulation results.'}</p>
+        <p class="results-empty" role="status">{run.plotMode === 'focused' && run.quantity
+          ? 'Select an element in Network or Table to plot it. Pin selections in Plot options to compare.'
+          : run.busy ? 'Preparing results…' : 'No simulation results.'}</p>
       {/if}
     </div>
     <!-- The measured plot axis owns the rail; controls never shorten or offset its domain. -->
     <div class="timeline">
-      <div class="scrubber" style:left={axis ? axis.left + 'px' : '8px'} style:width={axis ? axis.width + 'px' : 'calc(100% - 16px)'}>
+      <div class="scrubber" style:left={`${measured?.left ?? 8}px`} style:right={`${measured?.right ?? 8}px`}>
         <div class="scrubber__track" aria-hidden="true">
           <i class="scrubber__recorded" style:transform={`scaleX(${fraction(run.range[1])})`}></i>
           <i class="scrubber__played" style:transform={`scaleX(${fraction(time)})`}></i>
@@ -178,7 +208,7 @@
         <div class="scrubber__marks" aria-hidden="true">
           {#each marks as event, index (index)}<span style:left={percent(event.time)} title={`${eventActions[event.type].label} at ${event.time} s`}></span>{/each}
         </div>
-        <input bind:this={scrubber} aria-label="Simulation time" aria-valuetext={`${seconds(time)} seconds`} type="range" step="any" disabled={!plot} oninput={event => {
+        <input bind:this={scrubber} aria-label="Simulation time" aria-valuetext={`${seconds(time)} seconds`} type="range" step="any" disabled={!run.recorded} oninput={event => {
           const input = event.currentTarget;
           const at = Math.max(run.range[0], Math.min(run.range[1], input.valueAsNumber));
           input.valueAsNumber = at;
@@ -188,11 +218,11 @@
     </div>
     <div class="playback">
       <button class="c-icon-btn" aria-label={run.playing ? 'Pause' : 'Play'} title={run.playing ? 'Pause' : 'Play'}
-        disabled={!plot || run.range[0] === run.range[1]} onclick={() => run.play(!run.playing)}><Icon name={run.playing ? 'pause' : 'play'} /></button>
+        disabled={!run.recorded} onclick={() => run.play(!run.playing)}><Icon name={run.playing ? 'pause' : 'play'} /></button>
       <div class="playback-meta">
-        <output class="time" aria-label="Current simulation time" aria-live="off"><span class="time-label">Time</span> {seconds(time)}<span class="time-duration"> / {seconds(run.timeline[1])}</span> <span>s</span></output>
+        <output class="time" aria-label="Current simulation time" aria-live="off"><span class="time-label">Time</span> {seconds(time)} <span class="time-duration">/ {seconds(run.timeline[1])}</span> <span>s</span></output>
         <output class="trace-detail" aria-label="Hovered series" aria-live="off" title={detail ? [detail.label, detail.value, detail.at].filter(Boolean).join(' / ') : undefined}><bdi>{detail?.label ?? ''}</bdi> <span>{detail?.value ?? ''}</span> <span>{detail?.at ?? ''}</span></output>
-        <select class="speed" aria-label="Playback speed" bind:value={run.playhead.speed} disabled={!plot || run.live}>
+        <select class="speed" aria-label="Playback speed" bind:value={run.playhead.speed} disabled={!run.recorded || run.following}>
           <button type="button"><selectedcontent></selectedcontent></button>
           {#each speeds as speed (speed)}<option value={speed}>{speed}×</option>{/each}
         </select>
@@ -209,9 +239,11 @@
   .results-panel-actions { display: flex; align-items: center; flex: none; gap: var(--spacing-2xs); margin-inline-start: auto; }
   .results-measure { flex: 1; display: flex; align-items: center; gap: var(--spacing-xs); min-width: 0; }
   .results-quantity { flex: 1; width: 0; max-width: 18rem; min-width: 0; text-overflow: ellipsis; white-space: nowrap; }
-  .results-unit { flex: none; color: var(--color-text-3); font: var(--type-caption); white-space: nowrap; }
+  .results-measure > .field-unit { flex: none; margin: 0; white-space: nowrap; }
   .results-content { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; border-top: 1px solid var(--color-divider); }
-  .results-body { flex: 1; min-height: 0; overflow: hidden; }
+  .results-body { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+  .series-count { flex: none; margin: 0; padding: var(--spacing-2xs) var(--spacing-sm); color: var(--color-text-2); font: var(--type-caption); }
+  .results-body :global(.plot-canvas) { flex: 1; }
   select { width: auto; min-height: var(--control-height); border-color: transparent; background-color: transparent; padding-block: var(--spacing-2xs); }
   /* What the network's colors mean, in the options, opening them above the commands. */
   .color-scale { display: grid; gap: var(--spacing-xs); padding: var(--spacing-sm); border-bottom: 1px solid var(--color-border); }
@@ -247,15 +279,13 @@
   .scrubber input { appearance: none; -webkit-appearance: none; position: absolute; inset: 0 -6px; width: calc(100% + 12px); height: 100%; min-height: 0;
     margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; cursor: pointer; }
   .scrubber input:disabled { cursor: default; }
-  .scrubber:has(input:disabled) :is(.scrubber__track, .scrubber__marks) { opacity: 0.5; }
+  .scrubber:has(input:disabled) :is(.scrubber__track, .scrubber__marks) { opacity: var(--opacity-disabled); }
   .scrubber input::-webkit-slider-runnable-track { height: 4px; background: transparent; }
   .scrubber input::-moz-range-track { height: 4px; background: transparent; }
   .scrubber input::-webkit-slider-thumb { -webkit-appearance: none; box-sizing: border-box; width: 12px; height: 12px; margin-top: -4px;
     border: 2px solid var(--color-primary-text); border-radius: 50%; background: var(--color-surface-1); }
   .scrubber input::-moz-range-thumb { box-sizing: border-box; width: 12px; height: 12px; border: 2px solid var(--color-primary-text); border-radius: 50%;
     background: var(--color-surface-1); }
-  .scrubber input:disabled::-webkit-slider-thumb { opacity: 0.5; }
-  .scrubber input:disabled::-moz-range-thumb { opacity: 0.5; }
   .scrubber input:focus-visible { outline: none; }
   /* The thumb takes the focus ring; a pseudo-element has no outline of its own. */
   .scrubber input:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 var(--focus-width) var(--color-focus); }

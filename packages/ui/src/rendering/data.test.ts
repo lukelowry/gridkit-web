@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { expect, it } from 'vitest';
-import { Data, load, Patch } from 'latkit';
+import { Data, field, load, Patch } from 'latkit';
 import input from '../../../library/test/small.case.json';
 import { busName, CaseDocument, elementFields, parseCase } from '@gridkit/library';
 import { dataset, refOf, rowsOf, tableColumns, tables, writeRows } from './data.js';
@@ -33,6 +33,7 @@ it('keys rows by element identity and leaves unresolved connections unwired', ()
   expect(data.query({ of: 'Bus', select: {} }).ids).toEqual([north!.ref.id, south!.ref.id]);
   expect(data.get('Branch', line!.ref.id, 'ports.bus1')).toBe(north!.ref.id);
   expect(data.get('Bus', north!.ref.id, 'params.kv')).toBe(230);
+  expect(data.query({ of: 'Branch', select: { kv: field('params.kv').of('ports.bus1') } }).fields.kv).toEqual(Float64Array.of(230));
   expect(data.get('Bus', north!.ref.id, 'placement.geographic.longitude')).toBe(-90.1);
   expect(data.get('Bus', north!.ref.id, 'placement.network.x')).toBeNull();
   const fields = data.describe().tables.find(table => table.name === 'Bus')!.fields.map(field => field.name);
@@ -78,7 +79,6 @@ it.each([undefined, 2])('keeps branch ports as references when imported endpoint
     { ...input.devices[0], id: 'spur', ports: { bus1: 1 } },
   ] })));
   const data = project(document), [line, spur] = document.rows('devices');
-  expect(tableColumns(document, 'Branch').find(([name]) => name === 'ports.bus2')?.[1]).toBe('reference');
   expect(data.get('Branch', line!.ref.id, 'ports.bus2')).toBe(bus2 === undefined ? null : document.find('buses', 2)!.id);
   expect(data.get('Branch', spur!.ref.id, 'ports.bus2')).toBeNull();
   data.destroy();

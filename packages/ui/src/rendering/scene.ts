@@ -1,13 +1,13 @@
 import { field, when, type Expr, type ExprInput, type LatkitError, type Mark, type Scene } from 'latkit';
 import { record, type CaseDocument, type SavedViews } from '@gridkit/library';
-import { drawingOf, networkSpace, earthSpace, fittedSizes, resolveNetwork, networkTheme, type Palette } from '../mappings/defaults.js';
+import { drawingOf, networkSpace, earthSpace, fittedSizes, resolveNetwork, networkTheme, oceanOf, type Palette } from '../mappings/defaults.js';
 import { representation, type Diagnostic, type MarkDefinition } from '../domain/views.js';
 import type { PreferencesState } from '../preferences/state.svelte.js';
 import { legible, rgbOf } from '../ui/color.js';
-import { gesturesOf } from '../ui/latkit.js';
+import { controlsOf } from '../ui/latkit.js';
 import { dataset, tableOf } from './data.js';
-import { branchStateTable } from '../simulation/branches.js';
-import { simulationDataset, simulationFields, simulationOption, type SampledField } from '../simulation/sampled.js';
+import { branchStateDataset, branchStateTable } from '../simulation/branches.js';
+import { simulationFields, simulationOption, type SampledField } from '../simulation/sampled.js';
 import type { Measure } from '../domain/measure.js';
 
 /** The space a scene draws in, by name; the earth's by projection. */
@@ -32,8 +32,8 @@ const markOf = (kind: 'vertices' | 'edges', table: string, options: Record<strin
 export function networkScene({ document, preferences, palette, mappings, geographic, globe = false, simulation = false, sampled = [], measure, band, geography = [] }: {
   document: CaseDocument; preferences: PreferencesState; palette?: Palette; mappings: SavedViews; geographic: boolean;
   globe?: boolean; simulation?: boolean; sampled?: readonly SampledField[]; measure?: Measure | undefined; band?: number | null | undefined;
-  /** The geography's tables, `[data, table]`, which draw as lines under the case. */
-  geography?: readonly (readonly [data: string, table: string])[];
+  /** The geography's tables, `[data, table]`, which draw under the case: filled as its land over the ocean, or as lines. */
+  geography?: readonly { readonly table: readonly [data: string, table: string]; readonly fill: boolean }[];
 }): NetworkScene {
   const v = preferences.value, high = preferences.contrast === 'high';
   const theme = networkTheme(v, palette, preferences.theme);
@@ -41,7 +41,10 @@ export function networkScene({ document, preferences, palette, mappings, geograp
   const drawing = drawingOf(document, earthSpace(networkSpace(geographic, preferences.mappings, mappings)) ? 'geographic' : 'network');
   const resolved = resolveNetwork({ source: { targets: document.targets, geographic, drawing, simulation, measure, band, fields: simulationFields(document) },
     preferences: v, theme, userDefaults: preferences.mappings, caseOverrides: mappings });
-  const grounds = [resolved.theme.background, resolved.theme.earth?.ground].filter(color => typeof color === 'string');
+  // Where a map fills its land, the earth's ground is the ocean, and the land takes the ground's color. Everything the case draws
+  // reads on each, and on the view's background.
+  const land = resolved.theme.earth?.ground, ocean = geography.some(layer => layer.fill) ? oceanOf(v, palette) : undefined;
+  const grounds = [resolved.theme.background, land, ocean].filter(color => typeof color === 'string');
   const floor = high ? 7 : 4.5;
   const present = new Set(['Bus', 'Signal', ...document.targets.map(tableOf)]);
   const diagnostics: Diagnostic[] = [...resolved.diagnostics];
@@ -49,8 +52,9 @@ export function networkScene({ document, preferences, palette, mappings, geograp
   // its order, which by default has buses over the branches that meet them. Where depth varies, the nearest opaque row shows
   // whatever the order, so only translucent rows, such as those a selection dims, go by it, as they do seen flat.
   const marks: Mark[] = [], entries: (SceneMark | null)[] = [];
-  for (const [data, table] of geography) {
-    marks.push({ lines: [data, table], width: 1, pick: false });
+  // A map's land comes first, so it fills under the map's lines, in the theme's area color.
+  for (const { table: [data, table], fill } of geography) {
+    marks.push(fill ? { areas: [data, table], pick: false } : { lines: [data, table], width: 1, pick: false });
     entries.push(null);
   }
   if (v.networkPoles) {
@@ -75,7 +79,7 @@ export function networkScene({ document, preferences, palette, mappings, geograp
     // While results play, a branch out of service draws dashed and muted in the same mark, so its hover and selection stay.
     // In service it keeps no color of its own, so it blends its ends' colors as it does without results.
     if (simulation && table === 'Branch' && mark.kind === 'edges') {
-      const open = field('inService').from([simulationDataset, branchStateTable]).gt(0).not();
+      const open = field('inService').from([branchStateDataset, branchStateTable]).gt(0).not();
       const [r, g, b] = rgbOf(legible([String(resolved.theme.line?.color ?? '#808080')], grounds, floor)[0]!) ?? [128, 128, 128];
       Object.assign(base, { dash: open.or((options.dash ?? false) as ExprInput),
         color: when(open).then(`rgba(${r},${g},${b},0.7)`).otherwise((options.color ?? null) as ExprInput) });
@@ -85,13 +89,13 @@ export function networkScene({ document, preferences, palette, mappings, geograp
   }
   const missing = legible([String(resolved.theme.missing)], grounds, floor)[0]!;
   const scene: Scene = {
-    space: earthSpace(resolved.space) ? { earth: { projection: globe ? 'globe' : 'mercator', graticule: v.networkGrid, atmosphere: v.networkAtmosphere } }
-      : { plane: { grid: v.networkGrid ? { lines: { pitch: 10 } } : 'off' } },
-    marks, theme: { ...resolved.theme, missing, contrast: floor },
+    space: earthSpace(resolved.space) ? { earth: { projection: globe ? 'globe' : 'mercator', grid: v.networkGrid ? 'lines' : 'off', atmosphere: v.networkAtmosphere } }
+      : { plane: { grid: v.networkGrid ? { lines: { step: 10 } } : 'off' } },
+    marks, theme: { ...resolved.theme, ...ocean && { earth: { ...resolved.theme.earth, ground: ocean }, area: { ...resolved.theme.area, ...land && { color: land } } },
+      missing, contrast: floor },
     // A network lays out only the buses its case does not place.
     layout: drawing.placed ? 'none' : 'stress',
-    controls: { gestures: gesturesOf(v.wheel), keyboard: v.keyboard,
-      hover: v.hover, pickRadius: v.pickRadius, cycle: v.cycle, motion: preferences.motion === 'reduce' ? 'reduced' : 'full' },
+    controls: controlsOf(v, preferences.motion),
     ease: simulation || preferences.motion === 'reduce' ? 0 : v.animationMs / 1000,
   };
   return { scene, entries, diagnostics };

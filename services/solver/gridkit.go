@@ -14,6 +14,8 @@ const (
 	solverCommand = "DynamicSimulation"
 	// The recording's write end is the first extra file a child inherits.
 	recordingPath = "/proc/self/fd/3"
+	// GridKit's component versions, served as-is at the API root.
+	enginePath = "/opt/gridkit/share/gridkit/versions.json"
 )
 
 // solverSettings fixes which files a run reads and writes, and that GridKit records numbers, not text; everything else is

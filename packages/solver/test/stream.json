@@ -10,10 +10,42 @@
     [
       1,
       0.7
+    ],
+    [
+      2,
+      1.3
+    ],
+    [
+      3,
+      0.9
+    ],
+    [
+      4,
+      1.0
+    ],
+    [
+      5,
+      1.2
+    ],
+    [
+      6,
+      0.8
+    ],
+    [
+      7,
+      1.05
+    ],
+    [
+      8,
+      0.6
+    ],
+    [
+      9,
+      1.4
     ]
   ],
   "replies": {
-    "rows": "QAAAAHsicm93cyI6Miwic3RhdGUiOiJjb21wbGV0ZWQiLCJyYW5nZSI6WzAsMV0sImZpcnN0IjowLCJjb3VudCI6Mn0AAAAAAAAAAAAAAAAAAPA/mpmZmZmZ8T9mZmZmZmbmPw==",
-    "summary": "sAAAAHsicm93cyI6Miwic3RhdGUiOiJjb21wbGV0ZWQiLCJyYW5nZSI6WzAsMV0sInJlc2V0Ijp0cnVlLCJjdXJzb3IiOnsibGV2ZWwiOjAsImZpcnN0IjowLCJzZWFsZWQiOjJ9LCJ0aWxlcyI6W3sidGFyZ2V0IjoiaGlzdG9yeSIsImtpbmQiOiJzYW1wbGVzIiwibGV2ZWwiOjAsImZpcnN0IjowLCJyb3dzIjoyfV19AAAAAAAAAAAAAAAAAADwP5qZmZmZmfE/ZmZmZmZm5j8="
+    "rows": "QgAAAHsicm93cyI6MTAsInN0YXRlIjoiY29tcGxldGVkIiwicmFuZ2UiOlswLDldLCJmaXJzdCI6MCwiY291bnQiOjEwfQAAAAAAAAAAAAAAAAAA8D8AAAAAAAAAQAAAAAAAAAhAAAAAAAAAEEAAAAAAAAAUQAAAAAAAABhAAAAAAAAAHEAAAAAAAAAgQAAAAAAAACJAmpmZmZmZ8T9mZmZmZmbmP83MzMzMzPQ/zczMzMzM7D8AAAAAAADwPzMzMzMzM/M/mpmZmZmZ6T/NzMzMzMzwPzMzMzMzM+M/ZmZmZmZm9j8=",
+    "entries": "QQAAAHsicm93cyI6MTAsInN0YXRlIjoiY29tcGxldGVkIiwicmFuZ2UiOlswLDldLCJmaXJzdCI6MCwiY291bnQiOjF9AAAAAAAAAAAAAAAAAAAcQGZmZmZmZuY/zczMzMzM9D8="
   }
 }

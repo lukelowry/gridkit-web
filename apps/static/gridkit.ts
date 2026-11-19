@@ -2,8 +2,8 @@ import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { gunzipSync } from 'node:zlib';
 
-/** The files the static deployment serves beneath gridkit/: GridKit's module, and the licenses of what it is built from. */
-const wanted = (path: string) => path === 'DynamicSimulation.mjs' || path === 'DynamicSimulation.wasm'
+/** What the site serves beneath gridkit/: GridKit's module, versions.json, and licenses. */
+const wanted = (path: string) => path === 'DynamicSimulation.mjs' || path === 'DynamicSimulation.wasm' || path === 'versions.json'
   || (path.startsWith('licenses/') && !path.split('/').includes('..'));
 const manifests = ['application/vnd.oci.image.index.v1+json', 'application/vnd.docker.distribution.manifest.list.v2+json',
   'application/vnd.oci.image.manifest.v1+json', 'application/vnd.docker.distribution.manifest.v2+json'];

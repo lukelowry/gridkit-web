@@ -1,11 +1,6 @@
 import * as z from 'zod';
 import { elementCatalog } from './catalog.js';
 
-// What writes 1.0 as 1.0, which the JSON library leaves to newer runtimes.
-declare global {
-  interface JSON { rawJSON(text: string): object }
-}
-
 // Check row structure here; freezeJson checks opaque values without cloning them.
 const jsonObject = z.record(z.string(), z.unknown());
 const identifier = z.int();
@@ -117,8 +112,10 @@ export function parseCase(text: string): Case {
   return freezeJson(result.data);
 }
 
-/** Validate and deep-freeze JSON at import boundaries without allocating a second tree. */
+const frozenJson = new WeakSet<object>();
+/** Validate and deep-freeze JSON once at import boundaries without allocating a second tree. */
 export function freezeJson<T>(value: T): T {
+  if (value && typeof value === 'object' && frozenJson.has(value)) return value;
   const path: (string | number)[] = [];
   const fail = (message: string): never => { throw new Error(`${path.join('.') || 'case'}: ${message}`); };
   function visit(item: unknown): void {
@@ -140,6 +137,7 @@ export function freezeJson<T>(value: T): T {
     Object.freeze(item);
   }
   visit(value);
+  if (value && typeof value === 'object') frozenJson.add(value);
   return value;
 }
 
@@ -156,6 +154,13 @@ export function freeze<T>(value: T): T {
   return value;
 }
 
+/**
+ * GridKit reads 1.0 and 1 differently, but JSON writes whole reals as 1: they pass as marked strings, unquoted after. The
+ * mark is random per load.
+ */
+const real = `\u0001${Math.random().toString(36).slice(2)}:`;
+const marked = new RegExp(`"\\\\u0001${real.slice(1)}([^"]*)"`, 'g');
+
 function realLiterals(rows: Iterable<Bus | Device>) {
   const fields = new WeakMap<object, ReadonlySet<string>>();
   for (const row of rows) {
@@ -169,16 +174,16 @@ function realLiterals(rows: Iterable<Bus | Device>) {
   return function (this: object, key: string, value: unknown) {
     // GridKit's native parameter variants distinguish 1.0 from 1.
     return typeof value === 'number' && Number.isInteger(value) && fields.get(this)?.has(key)
-      ? JSON.rawJSON(value.toFixed(1)) : value;
+      ? real + value.toFixed(1) : value;
   };
 }
 
 /** Serialize a single native row without losing the parser's real/integer distinction. */
 export function serializeCaseRow(value: Bus | Device): string {
-  return JSON.stringify(value, realLiterals([value]));
+  return JSON.stringify(value, realLiterals([value])).replace(marked, '$1');
 }
 
 export function serializeCase(value: Case): string {
   function* rows() { yield* value.buses; yield* value.devices; }
-  return `${JSON.stringify(value, realLiterals(rows()), 2)}\n`;
+  return `${JSON.stringify(value, realLiterals(rows()), 2).replace(marked, '$1')}\n`;
 }

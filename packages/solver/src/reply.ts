@@ -2,7 +2,7 @@ import { SolverError } from './index.js';
 import type { Answer, Ask, Reply } from './protocol.js';
 
 /** What a reader asks, rather than how it pulls an answer. */
-export type Question = Extract<Ask, { op: 'rows' | 'summary' | 'artifact' }>;
+export type Question = Extract<Ask, { op: 'rows' | 'entries' | 'artifact' }>;
 type Questioning = Question extends infer Q ? Q extends Question ? Omit<Q, 'id'> : never : never;
 
 /**

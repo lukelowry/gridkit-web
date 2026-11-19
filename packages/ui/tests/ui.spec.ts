@@ -85,7 +85,7 @@ test.beforeEach(async ({ page }) => {
   page.on('dialog', dialog => dialog.accept());
   // A test cannot answer the browser's save picker, so saves take the download path.
   await page.addInitScript(() => Object.defineProperty(window, 'showSaveFilePicker', { value: undefined }));
-  for (const url of geographyOf(defaults))
+  for (const { url } of geographyOf(defaults))
     await page.route(url, route => route.fulfill({ path: fileURLToPath(new URL('fixtures/borders.geojson', import.meta.url)), contentType: 'application/geo+json' }));
   await page.goto('./');
 });

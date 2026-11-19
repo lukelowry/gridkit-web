@@ -10,14 +10,14 @@
   import Search from './Search.svelte';
   import ElementDialog from '../elements/ElementDialog.svelte';
   import Notice from '../ui/Notice.svelte';
-  import { errorMessage } from '../ui/errors.js';
+  import { errorMessage, reload, replaced } from '../ui/errors.js';
   import type NetworkView from '../rendering/NetworkView.svelte';
   import ProjectionControls from '../rendering/ProjectionControls.svelte';
   import Icon from '../ui/Icon.svelte';
   import Menu from '../ui/Menu.svelte';
   import type { MenuItem } from '../ui/menu.js';
   import Toasts from '../ui/Toasts.svelte';
-  import { clearNotice, notify } from '../ui/toasts.svelte.js';
+  import { clearNotice, notify, toasts } from '../ui/toasts.svelte.js';
   import Welcome from './Welcome.svelte';
   import AppShell from '../ui/AppShell.svelte';
   import leaf from '../assets/leaf.svg';
@@ -50,7 +50,7 @@
   const resultsId = $props.id();
   let colorScale = $state.raw<ColorScale | null>(null);
   const preferences = createPreferences();
-  const workspace = new Workspace({ get simulation() { return simulation; }, focusTable: () => table?.focus(), focusSolver: () => solver?.focus(), focusWelcome: () => welcome?.focus(), solverInvalid: () => solver?.controls().invalid ?? false });
+  const workspace = new Workspace({ get simulation() { return simulation; }, defaultMappings: () => preferences.mappings, focusTable: () => table?.focus(), focusSolver: () => solver?.focus(), focusWelcome: () => welcome?.focus(), solverInvalid: () => solver?.controls().invalid ?? false });
   const { caseSession, dialogs: stack, open, openPreferences, openExport, lookup, runStudy, choose, chooseOnCanvas, openElement, changeView,
     closeCase, openFile, download, downloadCaseFile } = workspace;
   const { showing, close, pending } = stack;
@@ -98,6 +98,16 @@
       notify(message, { key: 'simulation', ...log && 'href' in log && { link: { label: 'Download log', href: log.href, file: log.file } },
         ...failed && { action: { label: 'Run again', run: runStudy } } });
       if (failed && !current.recorded) simulation.close();
+    });
+  });
+  // After any error, say once if the site was redeployed since this page loaded.
+  let outdated = false;
+  $effect(() => {
+    if (outdated || !toasts.some(toast => toast.tone === 'error')) return;
+    void replaced().then(yes => {
+      if (!yes || outdated) return;
+      outdated = true;
+      notify('GridKit Web was updated since this page opened.', { key: 'replaced', action: reload });
     });
   });
   function beforeUnload(event: BeforeUnloadEvent) {
@@ -223,7 +233,7 @@
       {#snippet children({ default: PreferencesDialog })}<PreferencesDialog {preferences} {caseOpen} document={current.document} {geographic}
       mappings={caseSession.mappings} onmappings={value => caseSession.updateMappings(value)}
       initialPage={dialog.page} simulation={!!run?.data} measure={run?.networkMeasure} band={run?.band}
-      {onpending} onclose={() => close('preferences')} />{/snippet}
+      engine={simulation.solver.value?.engine ?? {}} {onpending} onclose={() => close('preferences')} />{/snippet}
     </Lazy>
   {:else if dialog.kind === 'case' && caseOpen}
     <CaseDetails value={current.info} disabled={busy} onclose={() => close('case')} ondownload={download} />

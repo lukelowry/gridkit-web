@@ -11,9 +11,10 @@ export async function client<Options>(worker: Worker | MessagePort, options: Opt
   const link = new Link(worker);
   try {
     signal?.throwIfAborted();
-    if ((await link.command({ op: 'open', options }, [], signal)).absent) { link.close(); return null; }
+    const { engine } = await link.command({ op: 'open', options }, [], signal);
+    if (!engine) { link.close(); return null; }
+    return { engine, start: request => link.start(request), close: () => link.close() };
   } catch (cause) { link.close(); throw cause; }
-  return { start: request => link.start(request), close: () => link.close() };
 }
 
 class Link {

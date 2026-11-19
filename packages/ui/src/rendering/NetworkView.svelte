@@ -4,9 +4,9 @@
   import { onDestroy, untrack } from 'svelte';
   import { Data, type Source } from 'latkit';
   import type { CaseDocument, ElementRef, SavedViews } from '@gridkit/library';
-  import { geographyOf } from '../preferences/definitions.js';
+  import { geographyOf, type GeographyLayer } from '../preferences/definitions.js';
   import type { PreferencesState } from '../preferences/state.svelte.js';
-  import { earthSpace, networkSpace, type Palette } from '../mappings/defaults.js';
+  import { earthSpace, networkSpace, paletteTokens } from '../mappings/defaults.js';
   import { fieldsIn } from '../domain/views.js';
   import { sampledName, simulationFields } from '../simulation/sampled.js';
   import type { RunSession } from '../simulation/run.svelte.js';
@@ -14,7 +14,8 @@
   import { colorScaleOf } from '../mappings/encoding.js';
   import type { ColorScale } from '../ui/ramps.js';
   import { sameReference, entryOf } from '../domain/entries.js';
-  import { colorHex } from '../ui/color.js';
+  import { themeColors } from '../ui/color.js';
+  import { reload } from '../ui/errors.js';
   import type { MenuItem } from '../ui/menu.js';
   import { dataset, refOf, rowsOf, tables } from './data.js';
   import { networkScene, spaceOf, tablesOf, themeOf } from './scene.js';
@@ -39,16 +40,19 @@
     exportable?: boolean;
   } = $props();
 
-  watchNotice(() => active && fault ? 'Rendering is unavailable. ' + fault : '', () => ({ action: { label: 'Try rendering again', run: () => host.retry(canvas) } }));
+  // A stopped runtime draws again only in a new page; anything else is worth another try in this one.
+  watchNotice(() => active && fault ? 'Rendering is unavailable. ' + fault : '',
+    () => ({ action: host.stopped ? reload : { label: 'Try rendering again', run: () => host.retry(canvas) } }));
   watchNotice(() => active && !fault ? geographyNotice : '');
   watchNotice(() => active && issues.length ? issues.map(issue => issue.path + ': ' + issue.message).join('\n') : '');
   const tilt = 45;
   let canvas = $state<HTMLCanvasElement>();
   let globe = $state(untrack(() => preferences.value.defaultProjection === 'globe'));
   let pitch = $state(0);
-  // The geography under a map, a dataset for each of its files, and their tables, which the network draws as lines.
-  let geography = $state.raw<readonly Data[]>([]);
-  const geographyTables = $derived(geography.flatMap(data => data.describe().tables.map(table => [data.name, table.name] as const)));
+  // The geography under a map, a dataset for each of its files, and their tables, which the network fills, as its ocean, or draws as
+  // lines.
+  let geography = $state.raw<readonly { readonly data: Data; readonly fill: boolean }[]>([]);
+  const geographyTables = $derived(geography.flatMap(({ data, fill }) => data.describe().tables.map(table => ({ table: [data.name, table.name] as const, fill }))));
   // Its files, which change only when the choice of them does.
   const geographyFiles = $derived(JSON.stringify(geographyOf(preferences.value)));
   let geographyNotice = $state('');
@@ -56,14 +60,7 @@
   let picked: ElementRef | null | undefined;
 
   // Normalize CSS colors for the UI's contrast calculations; the theme attribute is set before effects read this.
-  const palette = $derived.by((): Palette => {
-    void preferences.theme; void preferences.contrast;
-    const style = getComputedStyle(window.document.documentElement);
-    const read = (name: string) => colorHex(style.getPropertyValue(name).trim(), true) ?? '#808080';
-    return { background: read('--color-bg'), vertex: read('--color-primary-text'), line: read('--color-graph-line'), text: read('--color-text-1'),
-      grid: read('--color-graph-grid'), surface: read('--color-surface-2'), hover: read('--color-graph-hover'),
-      selected: read('--color-graph-selection') };
-  });
+  const palette = $derived.by(() => { void preferences.theme; void preferences.contrast; return themeColors(paletteTokens); });
   const simulationActive = $derived(!!run?.data && run.channels.length > 0);
   const scene = $derived.by(() => {
     return networkScene({ document, preferences, palette, mappings, geographic, globe, simulation: simulationActive, sampled: run?.sampledFields ?? [], measure: run?.networkMeasure, band: run?.band,
@@ -93,7 +90,7 @@
     return [verb + ': ' + entry.class + ' ' + entry.label + (entry.name ? ' (' + entry.name + ')' : '')];
   }).join('. '));
   const rows = $derived(tables(document));
-  const extra = (): Source[] => [...geography, ...run?.data ? [run.data] : []];
+  const extra = (): Source[] => [...geography.map(layer => layer.data), ...run?.sources ?? []];
   const host = new NetworkHost({
     document: () => document, scene: () => scene, rows: () => rows, extra, dock: () => dock,
     pitch: () => preferences.value.defaultProjection === 'tilt' ? tilt : 0,
@@ -201,21 +198,21 @@
     });
   });
   $effect(() => {
-    const files = JSON.parse(geographyFiles) as string[];
+    const files = JSON.parse(geographyFiles) as GeographyLayer[];
     geographyNotice = ''; geographyPending = false;
     if (!host.opened || host.stopped || !earth || !files.length) return;
     const abort = new AbortController(), loaded: Data[] = [];
     geographyPending = true;
     void (async () => {
       try {
-        const read = await Promise.all(files.map(async (url, index) => {
+        const read = await Promise.all(files.map(async ({ url, fill }, index) => {
           const response = await fetch(url, { signal: abort.signal });
           if (!response.ok) throw new Error(response.statusText);
           const data = await Data.read(response, { name: `geography-${index}`, signal: abort.signal });
           // A file read after the choice changed is freed at once.
           if (abort.signal.aborted) { data.destroy(); throw abort.signal.reason; }
           loaded.push(data);
-          return data;
+          return { data, fill };
         }));
         // The network view takes them, then the scene drawing them, once shown.
         geography = read;
@@ -234,7 +231,7 @@
 
   onDestroy(() => {
     onhover(null); host.destroy();
-    for (const data of geography) data.destroy();
+    for (const { data } of geography) data.destroy();
   });
 </script>
 

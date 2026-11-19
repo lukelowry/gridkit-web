@@ -1,11 +1,13 @@
 import { isTerminal, type Artifact, type Run, type Solver, type TimeRange } from '@gridkit/solver';
-import type { CaseDocument } from '@gridkit/library';
+import type { CaseDocument, ElementRef } from '@gridkit/library';
+import { Data, type LatkitError, type Source } from 'latkit';
 import { percentable, type Basis, type Measure } from '../domain/measure.js';
 import { errorMessage } from '../ui/errors.js';
 import { latkit } from '../ui/latkit.js';
-import { quantitiesOf, type Quantity } from './channels.js';
-import { BranchState } from './branches.js';
-import { compile, switchable, type Channel, type SimulationEvent, type Study } from '@gridkit/library/gridkit';
+import { channelsOf, pinnedSeriesLimit, quantitiesOf, type Quantity } from './channels.js';
+import { sameReference } from '../domain/entries.js';
+import { BranchState, branchStateDataset } from './branches.js';
+import { compile, switchable, type Channel, type SimulationEvent, type Study, type WantedOutput } from '@gridkit/library/gridkit';
 import type { SampledField } from './sampled.js';
 import { PlotFeed } from './plot-feed.svelte.js';
 import type { PlotViewport } from './plot.js';
@@ -42,6 +44,11 @@ export class RunSession {
   live = $state(true);
   /** The quantity the plot shows; a bus quantity is the one the network reads too. */
   quantity = $state.raw<Quantity>();
+  /** Whether the plot draws every series of its quantity, or only the selected and pinned elements'. */
+  plotMode = $state<'all' | 'focused'>('all');
+  /** Elements kept in the focused plot, each with the color it keeps while pinned. */
+  pinned = $state.raw<readonly (ElementRef & { readonly label: string; readonly slot: number })[]>([]);
+  #selected: ElementRef | null = null;
   /** What the plot and the network show of it. */
   basis = $state<Basis>('value');
   /** The time deviations are measured from, or the first sample without one. */
@@ -58,20 +65,27 @@ export class RunSession {
   });
   /** Whether the run recorded any samples. */
   get recorded() { return this.range[1] > this.range[0]; }
-  get playing() { return (this.live && this.busy) || this.playhead.playing; }
+  /** Whether the time shown is moving with a run still recording. */
+  get following() { return this.live && this.busy; }
+  get playing() { return this.following || this.playhead.playing; }
   /** The samples the network draws, once latkit has loaded; the session owns them. */
   get data() { return this.#recording?.data; }
+  get sources(): Source[] { return [...this.data ? [this.data] : [], ...this.#switching ? [this.#switching] : []]; }
   get sampledFields(): readonly SampledField[] { return this.#recording?.fields ?? []; }
   get plot() { return this.#plotFeed?.plot; }
+  /** Where the plot opens when it is drawn again: where gestures last left its camera. */
+  get plotOpening(): PlotViewport { return this.#plotFeed?.opening ?? { x: this.timeline, y: null }; }
   #execution: Run | undefined;
   #results: RunResults | undefined;
   #branches: BranchState | undefined;
+  #switching: Data | undefined;
   #observer = new Feed();
 
-  constructor(client: Solver, document: CaseDocument, version: number, study: Study, carried: RunPreferences) {
+  /** Runs `study` of `document`, recording what the views read of it (`wanted`). */
+  constructor(client: Solver, document: CaseDocument, version: number, study: Study, wanted: readonly WantedOutput[], carried: RunPreferences) {
     study = $state.snapshot(study);
     // Compiled now, so later settings never change what runs; a case GridKit cannot take fails the run, not the click that asked for it.
-    const compiled = (async () => compile(document, study))();
+    const compiled = (async () => compile(document, study, wanted))();
     const { tmax, events = [], dt_monitor } = structuredClone(study);
     const branches = new Map(document.rows('devices').filter(switchable).map(row => [String(row.value.id), row.ref.id]));
     this.caseVersion = version;
@@ -81,14 +95,16 @@ export class RunSession {
     this.playhead = new Playhead({ moved: time => this.#branches?.seek(time), end: () => this.range[1], running: () => this.busy });
     this.playhead.speed = carried.speed;
     this.#observer.start(async signal => {
-      // Observe both failures immediately while compilation and GPU setup proceed together.
-      const [{ channels, ...request }] = await Promise.all([compiled, latkit()]);
+      // Compile and set up the GPU together. Without WebGL2 the study still runs; only its views fail.
+      const [{ channels, ...request }] = await Promise.all([compiled,
+        latkit().catch((cause: LatkitError) => { if (cause?.code !== 'unsupported') throw cause; })]);
       signal.throwIfAborted();
-      const run = this.#execution = client.start(request), results = this.#results = new RunResults(run.results());
+      const run = this.#execution = client.start(request), results = this.#results = new RunResults(run.results(), channels.length);
       const parts = { results, extend: (range: TimeRange) => this.#extend(range), failed: (cause: unknown) => { this.error = errorMessage(cause); } };
       const recording = this.#recording = new Recording({ ...parts, rows: Math.ceil(tmax / dt_monitor) + 1 + 2 * events.length });
-      const plotFeed = this.#plotFeed = new PlotFeed({ ...parts, timeline: this.timeline });
-      this.#branches = new BranchState(recording.data, branches, events);
+      this.#plotFeed = new PlotFeed({ results, timeline: this.timeline });
+      this.#switching = new Data(branchStateDataset);
+      this.#branches = new BranchState(this.#switching, branches, events);
       void run.artifacts.then(artifacts => { this.artifacts = artifacts; }, () => {});
       for await (const update of run.updates(signal)) {
         signal.throwIfAborted();
@@ -96,6 +112,7 @@ export class RunSession {
         this.busy = !isTerminal(update.state);
         if (update.state === 'failed') this.error = update.error.message;
         if (!update.progress) continue;
+        results.recorded(update.progress.rows);
         this.#extend(update.progress.range);
         if (this.channels.length) continue;
         this.channels = channels;
@@ -104,18 +121,61 @@ export class RunSession {
         this.quantity = voltage ?? this.quantities[0];
         this.#busQuantity = voltage;
         recording.start(this.channels, this.reference);
-        if (this.quantity) plotFeed.show(this.quantity, this.basis, this.reference);
+        this.#showPlot();
       }
-    }, cause => { this.error = errorMessage(cause); this.failed = true; this.busy = false; this.playhead.pause(); });
+    }, cause => {
+      this.error = errorMessage(cause); this.failed = true; this.busy = false; this.playhead.pause();
+      // Stop a run this page lost, so it does not hold the solver.
+      void this.#execution?.cancel().catch(() => {});
+    });
   }
 
   #extend(range: TimeRange) {
-    this.range = [range[0], Math.max(this.range[1], range[1])];
-    if (this.live) this.playhead.show(this.range[1]);
+    const end = Math.max(this.range[1], range[1]);
+    if (range[0] === this.range[0] && end === this.range[1]) return;
+    this.range = [range[0], end];
+    if (this.live) this.playhead.show(end);
   }
 
   /** Installs the sampled fields the network's scene reads. */
   sample(fields: readonly SampledField[]) { this.#recording?.want(fields); }
+
+  focusPlot(selected: ElementRef | null) {
+    if (sameReference(selected, this.#selected)) return;
+    this.#selected = selected;
+    if (this.plotMode === 'focused') this.#showPlot();
+  }
+  setPlotMode(mode: 'all' | 'focused') {
+    if (mode === this.plotMode) return;
+    this.plotMode = mode; this.#showPlot();
+  }
+  pinPlot(selected: ElementRef) {
+    const channel = this.quantity && channelsOf(this.quantity, [selected])[0];
+    if (!channel || this.pinned.length >= pinnedSeriesLimit || this.pinned.some(ref => sameReference(ref, selected))) return;
+    this.pinned = [...this.pinned, { ...selected, label: `${channel.class ?? 'Bus'} ${channel.label}`, slot: this.#freeSlot() }];
+    this.plotMode = 'focused'; this.#showPlot();
+  }
+  unpinPlot(selected: ElementRef) {
+    this.pinned = this.pinned.filter(ref => !sameReference(ref, selected));
+    if (this.plotMode === 'focused') this.#showPlot();
+  }
+  /** The first color no pinned element holds. */
+  #freeSlot() {
+    const taken = new Set(this.pinned.map(pin => pin.slot));
+    let slot = 0;
+    while (taken.has(slot)) slot++;
+    return slot;
+  }
+  #showPlot() {
+    const quantity = this.quantity;
+    if (!quantity) return;
+    if (this.plotMode === 'all') { this.#plotFeed?.show(quantity, this.basis, this.reference); return; }
+    const channels = channelsOf(quantity, [...this.pinned, ...this.#selected ? [this.#selected] : []]);
+    if (!channels.length) { this.#plotFeed?.clear(); return; }
+    // A pinned element keeps its color while pinned, whatever is pinned or unpinned around it; the selection takes the first free.
+    const free = this.#freeSlot(), series = channels.map(channel => this.pinned.find(pin => sameReference(pin, channel.element))?.slot ?? free);
+    this.#plotFeed?.show({ ...quantity, channels }, this.basis, this.reference, series);
+  }
 
   /** Plots `key`'s quantity; a bus quantity also becomes what the network shows. */
   select(key: string) {
@@ -125,7 +185,7 @@ export class RunSession {
     if (quantity.channels[0]?.element.collection === 'buses') this.#busQuantity = quantity;
     if (this.basis === 'percent' && !percentable(quantity.unit)) this.basis = 'change';
     this.band = null;
-    this.#plotFeed?.show(quantity, this.basis, this.reference);
+    this.#showPlot();
   }
 
   /**
@@ -138,10 +198,10 @@ export class RunSession {
     if (basis !== this.basis) this.band = null;
     this.basis = basis; this.reference = reference;
     if (moved) this.#recording?.measureFrom(reference);
-    if (this.quantity) this.#plotFeed?.show(this.quantity, basis, reference);
+    this.#showPlot();
   }
 
-  viewport(viewport: PlotViewport, pixels: number, manual = false) { this.#plotFeed?.viewport(viewport, pixels, manual); }
+  viewport(viewport: PlotViewport) { this.#plotFeed?.viewport(viewport); }
   fit() { this.#plotFeed?.fit(); }
 
   /** Follows the run as it records. */
@@ -178,7 +238,7 @@ export class RunSession {
     if (this.busy) void this.#execution?.cancel().catch(() => {});
     this.busy = false;
     this.#recording?.close();
-    this.#plotFeed?.close();
+    this.#switching?.destroy();
     this.#results?.close();
   }
 

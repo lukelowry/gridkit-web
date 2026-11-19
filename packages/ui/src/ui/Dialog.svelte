@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte';
+  import { tick, type Snippet } from 'svelte';
   import Toasts from './Toasts.svelte';
   import Icon from './Icon.svelte';
   import { observeViewport, viewportBounds } from './viewport.js';
@@ -29,9 +29,19 @@
     }
     fitViewport();
     const unobserve = observeViewport(fitViewport);
+    // A browser closes a dialog itself where it lets Escape be refused only once. It is asked as Close asks, and shows again
+    // if that keeps it open, so what is on screen is what the workspace holds.
+    let removed = false;
+    modal.addEventListener('close', async () => {
+      if (removed) return;
+      onclose();
+      await tick();
+      if (!removed) modal.showModal();
+    });
     modal.showModal();
     ready = true;
     return () => {
+      removed = true;
       unobserve();
       modal.close();
       // Svelte can remove the dialog before cleanup, bypassing native focus restoration.
@@ -50,7 +60,7 @@
 </script>
 
 <dialog aria-labelledby={heading} class={{ compact }} {@attach mount}
-  oncancel={event => { event.preventDefault(); onclose(); }}
+  oncancel={event => { if (event.cancelable) { event.preventDefault(); onclose(); } }}
   onpointerdown={event => { backdropPress = outside(event); }}
   onpointercancel={() => { backdropPress = false; }}
   onclick={event => {
