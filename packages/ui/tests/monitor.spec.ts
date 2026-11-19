@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import fixture from '../../library/test/small.case.json' with { type: 'json' };
 import { completedRun } from './fixtures/completed-run.js';
+import { outputLabel } from '../src/simulation/channels.js';
 
 async function openResults(page: Page, edge = false) {
   await page.addInitScript(() => localStorage.setItem('gridkit.preferences', JSON.stringify({ theme: 'light', geography: 'none', resultsDock: 'right' })));
@@ -13,7 +14,7 @@ async function openResults(page: Page, edge = false) {
   await page.getByRole('button', { name: 'Run simulation', exact: true }).click();
   const panel = page.getByRole('region', { name: 'Simulation', exact: true });
   await expect(panel.locator('canvas')).toHaveAttribute('aria-busy', 'false');
-  if (edge) await panel.getByRole('combobox', { name: 'Plot quantity' }).selectOption({ label: 'p1' });
+  if (edge) await panel.getByRole('combobox', { name: 'Plot quantity' }).selectOption({ label: outputLabel('p1') });
   await page.getByRole('button', { name: 'Network', exact: true }).click();
   await expect(page.getByLabel('Network view', { exact: true })).toHaveAttribute('data-ready', 'true');
   return panel;
