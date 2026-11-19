@@ -48,7 +48,7 @@ it('draws mappings over the catalog structure, with preferences as theme, contro
   expect(mark(network, 'branches')).toMatchObject({ edges: ['case', 'Branch'], ends: ['ports.bus1', 'ports.bus2'] });
   expect(network.scene.theme).toMatchObject({ edge: { color: null } });
   expect(network.scene.theme).toHaveProperty('grid.spacing', 24);
-  expect(network.scene.controls).toEqual({ gestures: { twist: 'turn', slide: 'tilt' }, keyboard: true, hover: true, pickRadius: 6, cycle: false, motion: 'full' });
+  expect(network.scene.controls).toEqual({ gestures: { twist: 'turn', slide: 'tilt' }, keyboard: true, hover: true, pickRadius: 6, cycle: false, motion: 'full', fps: 30 });
   // With zoom on Ctrl or Cmd, the wheel scrolls the view, as a trackpad does.
   const modifier = scene(document, createPreferences(JSON.stringify({ wheel: 'modifier' })));
   expect(modifier.scene.controls).toMatchObject({ gestures: { wheel: 'pan', 'control+wheel': 'zoom', 'meta+wheel': 'zoom' } });
@@ -68,6 +68,8 @@ it('runs parallel circuits side by side and draws comets as the preferences set 
     .toMatchObject({ edge: { parallel: { converge: 'straight', gap: 1.5 } }, flow: { color: '#ff0000', spacing: 40 } });
   expect(theme({ parallelBranches: 'overlap' })).toMatchObject({ edge: { parallel: null } });
   expect(theme({ contrast: 'high' })).toMatchObject({ edge: { width: 2.5, parallel: { converge: 'fan' } } });
+  // Comets alone draw a view at the frame rate chosen.
+  expect(scene(document, createPreferences(JSON.stringify({ flowFrameRate: '60' }))).scene.controls).toMatchObject({ fps: 60 });
 });
 
 it('sizes the network in latkit\'s lengths, and orders overlapping buses by kV alongside layout', () => {

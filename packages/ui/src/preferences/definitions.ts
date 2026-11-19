@@ -80,6 +80,8 @@ export const preferenceFields = {
   flowSpacing: num('network', 'Flow', 'Comet spacing', 64, 8, 400, 1, 'px'),
   flowLength: num('network', 'Flow', 'Comet length', 24, 2, 200, 1, 'px'),
   flowWidth: num('network', 'Flow', 'Comet width', 4, 1, 16, .5, 'px'),
+  // The most frames a second a view draws while only its comets move; anything else that changes draws on the next frame.
+  flowFrameRate: choice('network', 'Flow', 'Comet frame rate', ['15', '30', '60'], '30', { 15: '15 fps', 30: '30 fps', 60: '60 fps' }),
   networkFont: font('network'),
   networkFontSize: num('network', 'Labels', 'Text size', 12, 6, 32, 1, 'px'),
   networkLabelHalo: num('network', 'Labels', 'Label halo', 2, 0, 8, .5, 'px'),

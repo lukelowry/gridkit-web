@@ -185,7 +185,8 @@ export function resolveNetwork({ source, preferences: v, theme = networkTheme(v)
   const measure = source.measure ?? { output: 'Vm', basis: 'value' as const };
   theme = mergeTheme(theme, resolved.theme);
   // Comets keep the ground a view's own theme sets, unless a comet color is chosen.
-  if (!v.flowColor && record(resolved.theme.flow)?.color === undefined) theme = { ...theme, flow: { ...theme.flow, color: theme.background } };
+  if (!v.flowColor && record(resolved.theme.flow)?.color === undefined && theme.background !== undefined)
+    theme = { ...theme, flow: { ...theme.flow, color: theme.background } };
   const position = positionOf(earthSpace(space) ? 'geographic' : 'network');
   const { radius, width } = fittedSizes(source.drawing, theme, v.networkMinRadius);
   const height = source.drawing?.height ?? 0;
