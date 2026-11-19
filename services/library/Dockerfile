@@ -1,5 +1,5 @@
 # The library image: Caddy answering, as its Caddyfile says, with the files mounted read-only at /data. It holds no files.
-FROM caddy:2.11.7-alpine
+FROM caddy:2.11.9-alpine
 RUN setcap -r /usr/bin/caddy \
     && addgroup -g 10001 app && adduser -D -u 10001 -G app app
 COPY Caddyfile /etc/caddy/Caddyfile
