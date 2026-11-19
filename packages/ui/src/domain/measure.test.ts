@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { affine, defaultBand, fieldOf, flowReach, measureOf, measureUnit, percentable, referenceField, type Basis } from './measure.js';
+import { affine, defaultBand, fieldOf, flowReach, leastSpan, measureOf, measureUnit, percentable, referenceField, type Basis } from './measure.js';
 
 it('names one sampled field for each measure, and reads it back', () => {
   for (const basis of ['value', 'change', 'percent'] as Basis[]) expect(measureOf(fieldOf({ output: 'Vm', basis }))).toEqual({ output: 'Vm', basis });
@@ -30,6 +30,15 @@ it('gives every deviation a band, from the output where it has its own', () => {
   expect(defaultBand({ output: 'Vm', basis: 'change' })).toBe(0.1);
   expect(defaultBand({ output: 'omega', basis: 'percent' })).toBe(5);
   expect(defaultBand({ output: 'omega', basis: 'change' })).toBe(1);
+});
+
+it('plots at least a tenth of the band the network colors across, and fits an output of unknown scale as closely as it lies', () => {
+  expect(leastSpan({ output: 'Vm', basis: 'change' })).toBeCloseTo(0.01);
+  // As recorded, a value spans what a change of it does.
+  expect(leastSpan({ output: 'Vm', basis: 'value' })).toBe(leastSpan({ output: 'Vm', basis: 'change' }));
+  expect(leastSpan({ output: 'Vm', basis: 'percent' })).toBe(1);
+  expect(leastSpan({ output: 'omega', basis: 'value' })).toBeNull();
+  expect(leastSpan({ output: 'Va', basis: 'percent' })).toBeNull();
 });
 
 it('moves comets at full speed from a branch power its own, and from any deviation its band', () => {

@@ -30,12 +30,12 @@ const gesturesOf = (wheel: Preferences['wheel']): Gestures => ({
 });
 
 /**
- * How every view answers input, as Interaction's settings choose, and how often it draws while only its comets move; a view adds
- * the gestures of its own.
+ * How every view answers input, as Interaction's settings choose, and how often it draws while only time or its comets move; a
+ * view adds the gestures of its own.
  */
 export const controlsOf = (v: Preferences, motion: 'reduce' | 'full'): Exclude<Controls, string> => ({
   gestures: gesturesOf(v.wheel), keyboard: v.keyboard, hover: v.hover, pickRadius: v.pickRadius, cycle: v.cycle,
-  motion: motion === 'reduce' ? 'reduced' : 'full', fps: Number(v.flowFrameRate),
+  motion: motion === 'reduce' ? 'reduced' : 'full', fps: Number(v.frameRate),
 });
 
 /** How every view shows what is hovered and selected, as Highlight's settings choose, in `palette` where they name no color. */

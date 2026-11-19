@@ -4,7 +4,7 @@
   import { onDestroy, untrack } from 'svelte';
   import { Data, type Source } from 'latkit';
   import type { CaseDocument, ElementRef, SavedViews } from '@gridkit/library';
-  import { geographyOf } from '../preferences/definitions.js';
+  import { geographyOf, type GeographyLayer } from '../preferences/definitions.js';
   import type { PreferencesState } from '../preferences/state.svelte.js';
   import { earthSpace, networkSpace, paletteTokens } from '../mappings/defaults.js';
   import { fieldsIn } from '../domain/views.js';
@@ -49,9 +49,10 @@
   let canvas = $state<HTMLCanvasElement>();
   let globe = $state(untrack(() => preferences.value.defaultProjection === 'globe'));
   let pitch = $state(0);
-  // The geography under a map, a dataset for each of its files, and their tables, which the network draws as lines.
-  let geography = $state.raw<readonly Data[]>([]);
-  const geographyTables = $derived(geography.flatMap(data => data.describe().tables.map(table => [data.name, table.name] as const)));
+  // The geography under a map, a dataset for each of its files, and their tables, which the network fills, as its ocean, or draws as
+  // lines.
+  let geography = $state.raw<readonly { readonly data: Data; readonly fill: boolean }[]>([]);
+  const geographyTables = $derived(geography.flatMap(({ data, fill }) => data.describe().tables.map(table => ({ table: [data.name, table.name] as const, fill }))));
   // Its files, which change only when the choice of them does.
   const geographyFiles = $derived(JSON.stringify(geographyOf(preferences.value)));
   let geographyNotice = $state('');
@@ -89,7 +90,7 @@
     return [verb + ': ' + entry.class + ' ' + entry.label + (entry.name ? ' (' + entry.name + ')' : '')];
   }).join('. '));
   const rows = $derived(tables(document));
-  const extra = (): Source[] => [...geography, ...run?.sources ?? []];
+  const extra = (): Source[] => [...geography.map(layer => layer.data), ...run?.sources ?? []];
   const host = new NetworkHost({
     document: () => document, scene: () => scene, rows: () => rows, extra, dock: () => dock,
     pitch: () => preferences.value.defaultProjection === 'tilt' ? tilt : 0,
@@ -197,21 +198,21 @@
     });
   });
   $effect(() => {
-    const files = JSON.parse(geographyFiles) as string[];
+    const files = JSON.parse(geographyFiles) as GeographyLayer[];
     geographyNotice = ''; geographyPending = false;
     if (!host.opened || host.stopped || !earth || !files.length) return;
     const abort = new AbortController(), loaded: Data[] = [];
     geographyPending = true;
     void (async () => {
       try {
-        const read = await Promise.all(files.map(async (url, index) => {
+        const read = await Promise.all(files.map(async ({ url, fill }, index) => {
           const response = await fetch(url, { signal: abort.signal });
           if (!response.ok) throw new Error(response.statusText);
           const data = await Data.read(response, { name: `geography-${index}`, signal: abort.signal });
           // A file read after the choice changed is freed at once.
           if (abort.signal.aborted) { data.destroy(); throw abort.signal.reason; }
           loaded.push(data);
-          return data;
+          return { data, fill };
         }));
         // The network view takes them, then the scene drawing them, once shown.
         geography = read;
@@ -230,7 +231,7 @@
 
   onDestroy(() => {
     onhover(null); host.destroy();
-    for (const data of geography) data.destroy();
+    for (const { data } of geography) data.destroy();
   });
 </script>
 

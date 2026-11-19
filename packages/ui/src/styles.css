@@ -31,6 +31,8 @@
   /* Canvas roles: the grid recedes, lines and block outlines keep 3:1 on every ground, and highlights are never a data color. */
   --color-graph-grid: oklch(88% 0.007 22);
   --color-graph-line: oklch(60% 0.008 22);
+  /* The ocean under a map: as light as the land's ground, cooler, so everything drawn over either keeps its contrast. */
+  --color-graph-water: oklch(94% 0.022 235);
   --color-graph-hover: oklch(17% 0.01 22 / 0.5);
   --color-graph-selection: var(--color-text-1);
   --spacing-2xs: 2px;
@@ -89,6 +91,7 @@
   --color-row-hover: rgb(255 255 255 / 0.04);
   --color-graph-grid: oklch(26% 0.008 22);
   --color-graph-line: oklch(52% 0.008 22);
+  --color-graph-water: oklch(20% 0.028 240);
   --color-graph-hover: oklch(92% 0.005 22 / 0.5);
   --color-error: oklch(70% 0.14 35);
   --color-error-surface: oklch(24% 0.045 24);
@@ -280,7 +283,7 @@ dd { margin: 0; overflow-wrap: anywhere; }
   :root[data-theme] { --color-bg: Canvas; --color-surface-1: Canvas; --color-surface-2: Canvas; --color-text-1: CanvasText; --color-primary-text: CanvasText;
     --color-focus: Highlight; --color-selection-border: Highlight; --color-info: CanvasText; --color-info-surface: Canvas; --color-warning: CanvasText; --color-warning-surface: Canvas;
     --color-success: CanvasText; --color-error: CanvasText; --color-error-surface: Canvas;
-    --color-graph-grid: Canvas; --color-graph-line: CanvasText; --color-graph-hover: GrayText; --color-graph-selection: Highlight; }
+    --color-graph-grid: Canvas; --color-graph-line: CanvasText; --color-graph-water: Canvas; --color-graph-hover: GrayText; --color-graph-selection: Highlight; }
 }
 
 :root[data-contrast="high"] { --color-border: var(--color-text-3); --color-control-border: var(--color-text-2); --focus-width: 3px; }

@@ -113,7 +113,7 @@ export function fittedSizes(drawing: Drawing | undefined, theme: SceneTheme, lea
 /** The page's tokens a network draws in, by what each colors. */
 export const paletteTokens = {
   background: '--color-bg', vertex: '--color-primary-text', line: '--color-graph-line', text: '--color-text-1', grid: '--color-graph-grid',
-  surface: '--color-surface-2', hover: '--color-graph-hover', selected: '--color-graph-selection',
+  surface: '--color-surface-2', water: '--color-graph-water', hover: '--color-graph-hover', selected: '--color-graph-selection',
 } as const;
 /** Theme colors as CSS; the views normalize them for contrast calculations, and the mapping settings name them as tokens. */
 export type Palette = Record<keyof typeof paletteTokens, string>;
@@ -140,6 +140,8 @@ export function networkTheme(v: Preferences, palette: Palette = tokens, base: 'l
     earth: { ground: palette.surface }, dash: v.dashPeriod,
   };
 }
+/** The ocean under a map, where it fills its land over it: the color chosen, else the palette's water. */
+export const oceanOf = (v: Preferences, palette: Palette = tokens) => v.networkOceanColor || palette.water;
 /** Whether `space` places positions on the earth, as a map or a globe. */
 export const earthSpace = (space: unknown) => space === 'earth' || record(space)?.earth !== undefined;
 /** The native position fields for a coordinate space. */

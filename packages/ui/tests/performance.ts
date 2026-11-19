@@ -28,24 +28,29 @@ function frames(gpu: Gpu, view: View, count: number, change: (frame: number) => 
   });
 }
 
-/** A phase's frames, once the last of them has drawn: the GPU time is the median latkit keeps of the last frames measured. */
+/**
+ * A phase's frames, once the last of them has drawn: the frames the view drew each second of it, which the controls' frame rate
+ * caps while only time or comets move, and the GPU time, the median latkit keeps of the last frames measured.
+ */
 async function phase(gpu: Gpu, view: View, change: (frame: number) => void) {
+  const drawn = view.stats.frames, started = performance.now();
   const { cpu, gaps } = await frames(gpu, view, phaseFrames, change);
+  const fps = (view.stats.frames - drawn) * 1000 / (performance.now() - started);
   await view.done({ signal: AbortSignal.timeout(30_000) });
-  return { cpuP50: percentile(cpu, 0.5), cpuP95: percentile(cpu, 0.95), frameGapP95: percentile(gaps, 0.95), gpuMs: view.stats.gpuMs };
+  return { fps, cpuP50: percentile(cpu, 0.5), cpuP95: percentile(cpu, 0.95), frameGapP95: percentile(gaps, 0.95), gpuMs: view.stats.gpuMs };
 }
 
 /** Browser-only probe, loaded by performance.probe.ts through the development server. Never included in the app build. */
 export async function measureNetwork(size: number, budgetMiB: number) {
   const gpu = await Gpu.create();
   gpu.budget = { ...gpu.budget, bytes: Math.min(gpu.budget.bytes, budgetMiB * 1024 * 1024) };
-  const data = new Data('benchmark'), samples = new Data('benchmark-results');
+  const data = new Data('benchmark'), samples = new Data('benchmark-results').axis('Time', 's');
   const canvas = document.createElement('canvas');
   canvas.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;z-index:10000;background:white';
   document.body.append(canvas);
   let view: View | undefined;
   try {
-    const side = Math.ceil(Math.sqrt(size)), values = new Float32Array(size).fill(0.5);
+    const side = Math.ceil(Math.sqrt(size));
     data.replace('Bus', { count: size }, {
       x: Float64Array.from({ length: size }, (_, i) => i % side),
       y: Float64Array.from({ length: size }, (_, i) => Math.floor(i / side)),
@@ -54,7 +59,10 @@ export async function measureNetwork(size: number, budgetMiB: number) {
       from: reference('Bus', Uint32Array.from({ length: size }, (_, i) => i % 20 === 1 ? i - 1 : i)),
       to: reference('Bus', Uint32Array.from({ length: size }, (_, i) => Math.min(size - 1, i % 20 === 1 ? i : i + 1))),
     });
-    samples.replace('Bus', { count: size }, { Vm: values });
+    // A recording of every bus, as a run's results are: four frames a second apart, each bus a step further around its range.
+    const recorded = [0, 1, 2, 3];
+    samples.replace('Bus', { count: size }, {});
+    samples.append('Bus', recorded, { Vm: Float32Array.from({ length: size * recorded.length }, (_, k) => ((k % size) % 97 / 97 + Math.floor(k / size) / 3) % 1) });
     const voltage = field('Vm').from(['benchmark-results', 'Bus']), started = performance.now();
     // Branches under buses, as the network draws them, with the editor's controls: comets draw at its default frame rate.
     const sceneWith = (flow: number): Scene => ({
@@ -68,14 +76,14 @@ export async function measureNetwork(size: number, budgetMiB: number) {
     view = await View.create(canvas, sceneWith(0), { gpu, sources: [data, samples], camera: { pitch: 45 } });
     await view.done({ signal: AbortSignal.timeout(30_000) });
     const openMs = performance.now() - started, before = gpu.work, camera = view.camera;
-    const vary = (frame: number) => { values.fill((frame % 60) / 60); samples.set('Bus', { count: size }, { Vm: values }); };
-    // The camera and the buses change every frame, so every mark draws.
+    const play = (frame: number) => { view!.at = (frame % 60) / 20; };
+    // The camera and the time shown move every frame, so every mark draws, each frame.
     const moving = await phase(gpu, view, frame => {
-      vary(frame);
+      play(frame);
       if ('center' in camera) view!.camera = { center: [camera.center[0] + Math.sin(frame / 20) * side / 20, camera.center[1]], bearing: frame / 5 };
     });
-    // As results play, the buses change and the camera rests: each frame draws them over the image kept of the branches.
-    const playing = await phase(gpu, view, vary);
+    // As results play, only the time shown moves: the buses draw over the image kept of the branches, at the controls' frame rate.
+    const playing = await phase(gpu, view, play);
     // A hover moving from bus to bus draws only the rows it lights over the image kept of every mark.
     const hovering = await phase(gpu, view, frame => { view!.hovered = { data: 'benchmark', table: 'Bus', id: (frame * 7919) % size }; });
     view.hovered = null;

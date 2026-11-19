@@ -27,16 +27,19 @@ const url = (category: Category, group: string, label: string) =>
 const only = <F extends object>(field: F, key: string, values: readonly string[]) => ({ ...field, when: { key, values } });
 /** Natural Earth's GeoJSON, at the release this pins. */
 const naturalEarth = (name: string) => `https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_${name}.geojson`;
+/** The land at 1:50m, over the ocean under a detailed map's coasts or the user's own GeoJSON. */
+const detailedLand = naturalEarth('50m_land');
 /**
- * The geography a map draws under its network, each choice the GeoJSON files that draw it as lines: countries at 1:110m, and the
- * rest at 1:50m, its land borders and coasts drawn once each.
+ * The geography a map draws under its network, each choice its land, which fills over the ocean at the scale of its coasts, and
+ * the GeoJSON files that draw it as lines: countries at 1:110m, and the rest at 1:50m, its land borders and coasts drawn once each.
  */
 export const geographies = {
-  countries: [naturalEarth('110m_admin_0_countries')],
-  detailed: [naturalEarth('50m_coastline'), naturalEarth('50m_admin_0_boundary_lines_land')],
-  states: [naturalEarth('50m_coastline'), naturalEarth('50m_admin_0_boundary_lines_land'), naturalEarth('50m_admin_1_states_provinces_lines')],
-  coastlines: [naturalEarth('50m_coastline')],
-  water: [naturalEarth('50m_coastline'), naturalEarth('50m_rivers_lake_centerlines'), naturalEarth('50m_lakes')],
+  countries: { land: naturalEarth('110m_land'), lines: [naturalEarth('110m_admin_0_countries')] },
+  detailed: { land: detailedLand, lines: [naturalEarth('50m_coastline'), naturalEarth('50m_admin_0_boundary_lines_land')] },
+  states: { land: detailedLand,
+    lines: [naturalEarth('50m_coastline'), naturalEarth('50m_admin_0_boundary_lines_land'), naturalEarth('50m_admin_1_states_provinces_lines')] },
+  coastlines: { land: detailedLand, lines: [naturalEarth('50m_coastline')] },
+  water: { land: detailedLand, lines: [naturalEarth('50m_coastline'), naturalEarth('50m_rivers_lake_centerlines'), naturalEarth('50m_lakes')] },
 } as const;
 const mapped = Object.keys(geographies) as (keyof typeof geographies)[];
 /**
@@ -58,6 +61,9 @@ export const preferenceFields = {
   theme: choice('appearance', '', 'Theme', ['system', 'light', 'dark'], 'system'),
   contrast: choice('appearance', '', 'Contrast', ['system', 'high'], 'system'),
   motion: choice('appearance', '', 'Motion', ['system', 'reduce'], 'system'),
+  // The most frames a second each view draws while only time or comets move it, as results play or are scrubbed; anything else
+  // that changes draws on the next frame.
+  frameRate: choice('appearance', '', 'Animation frame rate', ['15', '30', '60'], '30', { 15: '15 fps', 30: '30 fps', 60: '60 fps' }),
   resultsDock: choice('appearance', '', 'Results panel', ['bottom', 'right'], 'bottom'),
   networkGrid: bool('network', 'Layers', 'Grid', true),
   networkGridSpacing: num('network', 'Layers', 'Minimum grid spacing', 24, 4, 200, 1, 'px'),
@@ -68,6 +74,7 @@ export const preferenceFields = {
     custom: 'Custom GeoJSON',
   }),
   geographyUrl: only(url('network', 'Layers', 'GeoJSON URL'), 'geography', ['custom']),
+  networkOcean: only(bool('network', 'Layers', 'Ocean', true), 'geography', [...mapped, 'custom']),
   networkMinRadius: num('network', 'Geometry', 'Minimum bus radius', 1, 0, 10, .5, 'px'),
   dashPeriod: num('network', 'Geometry', 'Dash length', 12, 1, 64, 1, 'px'),
   // Circuits between the same two buses run side by side and come together at each bus as chosen. A gap a little wider than the
@@ -80,14 +87,13 @@ export const preferenceFields = {
   flowSpacing: num('network', 'Flow', 'Comet spacing', 64, 8, 400, 1, 'px'),
   flowLength: num('network', 'Flow', 'Comet length', 24, 2, 200, 1, 'px'),
   flowWidth: num('network', 'Flow', 'Comet width', 4, 1, 16, .5, 'px'),
-  // The most frames a second a view draws while only its comets move; anything else that changes draws on the next frame.
-  flowFrameRate: choice('network', 'Flow', 'Comet frame rate', ['15', '30', '60'], '30', { 15: '15 fps', 30: '30 fps', 60: '60 fps' }),
   networkFont: font('network'),
   networkFontSize: num('network', 'Labels', 'Text size', 12, 6, 32, 1, 'px'),
   networkLabelHalo: num('network', 'Labels', 'Label halo', 2, 0, 8, .5, 'px'),
   networkBackground: color('network', 'Colors', 'Background'),
   networkTextColor: color('network', 'Colors', 'Labels'),
   networkGridColor: color('network', 'Colors', 'Grid'),
+  networkOceanColor: only(color('network', 'Colors', 'Ocean'), 'networkOcean', ['true']),
   flowColor: color('network', 'Colors', 'Comets'),
   defaultProjection: choice('network', 'Camera', 'Initial projection', ['flat', 'tilt', 'globe'], 'flat'),
   hoverScale: num('network', 'Highlight', 'Bus hover scale', 1.1, 1, 3, .1),
@@ -139,9 +145,17 @@ export function applies(key: PreferenceKey, v: Preferences): boolean {
   const field: PreferenceField = preferenceFields[key];
   return !('when' in field) || field.when.values.includes(String(v[field.when.key as PreferenceKey]));
 }
-/** The GeoJSON files a map draws under its network as `v` chooses: a geography's, the user's own, or none. */
-export const geographyOf = (v: Preferences): readonly string[] =>
-  v.geography === 'custom' ? v.geographyUrl ? [v.geographyUrl] : [] : v.geography === 'none' ? [] : geographies[v.geography];
+/** A GeoJSON file of the geography under a map, which it fills as the land over its ocean, or draws as lines. */
+export interface GeographyLayer { readonly url: string; readonly fill: boolean }
+/**
+ * The geography a map draws under its network as `v` chooses, a geography's or the user's own, with its land filled over the ocean
+ * where shown, or none.
+ */
+export function geographyOf(v: Preferences): readonly GeographyLayer[] {
+  if (v.geography === 'none') return [];
+  const { land, lines } = v.geography === 'custom' ? { land: detailedLand, lines: v.geographyUrl ? [v.geographyUrl] : [] } : geographies[v.geography];
+  return [...v.networkOcean ? [{ url: land, fill: true }] : [], ...lines.map(url => ({ url, fill: false }))];
+}
 
 export const tableSchema = z.object({
   columns: z.array(z.object({ key: z.string(), width: z.number().min(60).max(600), visible: z.boolean() })).default([]),

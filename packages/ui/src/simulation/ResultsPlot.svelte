@@ -8,7 +8,7 @@
   import { View, type Scene, type Hit } from 'latkit';
   import { plotDataset, type PlotAxis, type PlotData, type PlotViewport } from './plot.js';
   import type { Playhead } from './playhead.svelte.js';
-  import { measureUnit } from '../domain/measure.js';
+  import { leastSpan, measureUnit } from '../domain/measure.js';
   import type { PreferencesState } from '../preferences/state.svelte.js';
   import { controlsOf, focusOf, latkit } from '../ui/latkit.js';
   import { themeColors } from '../ui/color.js';
@@ -21,6 +21,7 @@
     plot: PlotData; playhead: Playhead; preferences: PreferencesState;
     /** Where the view opens: where gestures last left the camera. */
     opening: PlotViewport;
+    /** Draws the plot again in a new view, once this one cannot draw. */
     onretry: () => void;
     onseek: (time: number) => void;
     /** The times and values a gesture put in view. */
@@ -31,6 +32,8 @@
   let canvas: HTMLCanvasElement;
   let view = $state.raw<View>();
   let error = $state('');
+  /** Why results the plot draws are missing, until they are read: latkit reads them again on its own, after a wait. */
+  let missing = $state('');
   let ready = $state(false);
   let typography = $state.raw<{ font: string; size: number }>();
   let hit = $state.raw<Hit | null>(null);
@@ -59,7 +62,8 @@
   const scene = $derived<Scene>({
     ease: 0,
     // The dock names the quantity, units, and time; the canvas keeps only the numeric axes.
-    space: { plot: { x: { label: null }, y: { label: null } } },
+    // A steady value draws flat at the least range its measure has, rather than filling the plot with the solver's noise.
+    space: { plot: { x: { label: null }, y: { label: null, minSpan: leastSpan({ output: quantity.output, basis: plot.basis }) } } },
     // Traces keep 4.5:1 contrast with the plot's ground, or 7:1 in high contrast. The tick labels sit 2 px in from the canvas's edges.
     theme: { base: preferences.theme, background: palette.background, grid: { color: palette.grid }, contrast: preferences.contrast === 'high' ? 7 : 4.5,
       padding: 2, focus: focusOf(preferences.value, palette),
@@ -110,6 +114,8 @@
           }),
           // Tiles keep refining while valid frames are on screen: the plot is ready once one is drawn.
           live.on('waiting', () => { ready ||= live!.stats.frames > 0; }),
+          // A file of the run's results that could not be read is listed under the tiles' name until it is.
+          live.on('failures', failures => { missing = failures.find(failure => failure.path?.startsWith(source.name))?.message ?? ''; }),
           live.on('error', failure => { error = failure.message; }));
         view = live;
       } catch (cause) { if (!disposed) error = errorMessage(cause); }
@@ -130,6 +136,9 @@
     appliedView = current; appliedCamera = commanded;
   });
   watchNotice(() => error ? 'The plot could not be drawn. ' + error : '', () => ({ action: { label: 'Retry plot', run: onretry } }));
+  // It clears once they are read; Retry reads them at once rather than after latkit's wait, up to a minute.
+  watchNotice(() => !error && missing ? 'Some of the plot\'s results could not be read. ' + missing : '',
+    () => ({ action: { label: 'Retry', run: () => plot.source.refresh() } }));
 </script>
 
 <div class="plot-canvas">

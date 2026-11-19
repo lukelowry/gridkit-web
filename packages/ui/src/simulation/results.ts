@@ -28,11 +28,8 @@ export class Feed {
   stop() { this.#current?.abort(); this.#current = undefined; }
 }
 
-/**
- * A tile set as the plot reads it: its tiles; the rows its index last listed and the entries in each span, from when it is first
- * drawn; how many fetches a refresh waits on, of its index and of its spans at the run's edge; and whether a refresh is under way.
- */
-interface TileState { readonly tiles: Tiles; index?: { rows: number; chunk: number }; awaited: number; refreshing: boolean }
+/** A tile set as the plot reads it: its tiles, and how many rows the run had recorded when they last caught up with it. */
+interface TileState { readonly tiles: Tiles; rows: number }
 
 /** What a run says when its results cannot be read, as when the files this page was built with are gone since it opened. */
 const unreadable = "This run's results could not be read. Download the case, then reload the page.";
@@ -113,32 +110,12 @@ export class RunResults {
     const key = JSON.stringify(set);
     let state = this.#tiles.get(key);
     if (!state) {
-      // A refresh renews the spans reaching past what the index listed, and drops any still on its way: it settles only once the
-      // index has landed, latkit has asked for those spans in its next frame, and they have landed too. The history behind them, as
-      // a new level of detail fills in, holds back no refresh.
-      const settle = () => requestAnimationFrame(() => requestAnimationFrame(() => {
-        if (held.awaited) return;
-        held.refreshing = false;
-        this.#catchUp();
-      }));
+      // Each file once the run's port is open; tiles not drawn yet read the run as it is when they are.
       const fetch = async (url: string) => {
-        const path = url.slice(url.indexOf('/') + 1), span = /^(\d+)\/(\d+)\.latk$/.exec(path), index = held.index;
-        const awaited = path === 'frames.json' || (!!span && !!index && (Number(span[2]) + 1) * index.chunk * 8 ** Number(span[1]) > index.rows);
-        if (awaited) held.awaited++;
-        try {
-          await this.#opened;
-          const bytes = await this.#request<Uint8Array>({ kind: 'tile', set, path });
-          if (path === 'frames.json') {
-            const { chunk, frames: [field] } = JSON.parse(new TextDecoder().decode(bytes)) as { chunk: number; frames: [{ frames: [number, number] }] };
-            held.index = { rows: field.frames[1], chunk };
-          }
-          return bytes;
-        } finally {
-          if (awaited) { held.awaited--; settle(); }
-        }
+        await this.#opened;
+        return this.#request<Uint8Array>({ kind: 'tile', set, path: url.slice(url.indexOf('/') + 1) });
       };
-      const held: TileState = { tiles: new Tiles(plotDataset, `plot:${this.#tiles.size}/frames.json`, { fetch }), awaited: 0, refreshing: false };
-      this.#tiles.set(key, state = held);
+      this.#tiles.set(key, state = { tiles: new Tiles(plotDataset, `plot:${this.#tiles.size}/frames.json`, { fetch }), rows: this.#rows });
     }
     this.#shown = state;
     this.#catchUp();
@@ -150,13 +127,13 @@ export class RunResults {
     this.#catchUp();
   }
   /**
-   * Refreshes the tiles shown when their index lists fewer rows than the run has recorded: one refresh at a time, each once the
-   * spans the last renewed have landed. Tiles not drawn yet read the run as it is when they are.
+   * Refreshes the tiles shown when the run has recorded rows since they last caught up. latkit lands a file being fetched first,
+   * then fetches it once more however often they were refreshed meanwhile, so each new row asks for no more than that.
    */
   #catchUp() {
     const shown = this.#shown;
-    if (!shown?.index || shown.refreshing || shown.awaited || shown.index.rows >= this.#rows) return;
-    shown.refreshing = true;
+    if (!shown || shown.rows >= this.#rows) return;
+    shown.rows = this.#rows;
     shown.tiles.refresh();
   }
   /** Ends every feed; the worker lets the run's port go, then ends itself. */
