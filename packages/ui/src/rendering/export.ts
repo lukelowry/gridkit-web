@@ -61,7 +61,13 @@ function queued<T>(view: View, signal: AbortSignal | undefined, work: () => Prom
 }
 function pictureScene(scene: Scene, text: number): Scene {
   const theme = themeOf(scene), size = theme?.text?.size;
-  return { ...scene, ease: 0, controls: { hover: false, motion: 'full' },
+  const marks = scene.marks?.map(mark => {
+    const label = mark.label;
+    if (text === 1 || !label || typeof label !== 'object' || !('text' in label) || label.size == null) return mark;
+    const size = typeof label.size === 'number' ? label.size * text : { units: label.size.units * text };
+    return { ...mark, label: { ...label, size } };
+  });
+  return { ...scene, ...marks && { marks }, ease: 0, controls: { hover: false, motion: 'full' },
     ...theme && { theme: { ...theme, ...size !== undefined && { text: { ...theme.text, size: size * text } } } } };
 }
 

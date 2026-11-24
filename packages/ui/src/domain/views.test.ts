@@ -3,7 +3,7 @@ import { field, when } from 'latkit';
 import { CaseDocument, parseCase } from '@gridkit/library';
 import { createPreferences } from '../preferences/state.svelte.js';
 import fixture from '../../../library/test/small.case.json';
-import { fieldsIn, mergeTheme, normalizeSpace, recognize } from './views.js';
+import { fieldsIn, mergeTheme, recognize } from './views.js';
 
 it('reads native local fields without treating joined fields, colors, or literal text as dependencies', () => {
   const value = when(field('name').is('$literal')).then(field('params.kv'))
@@ -14,15 +14,6 @@ it('reads native local fields without treating joined fields, colors, or literal
   expect(fieldsIn(field('params.kv').of('ports.bus1').toJSON())).toEqual(['ports.bus1']);
   expect(recognize(field('params.kv').scale(3, 12).toJSON())).toMatchObject({ kind: 'scale', field: 'params.kv', range: [3, 12] });
   expect(recognize('rebeccapurple')).toMatchObject({ kind: 'constant' });
-});
-
-it('normalizes old grids at resolution without changing stored case or browser mappings', () => {
-  const old = { theme: { grid: '#123456', gridSpacing: 32, future: true }, space: { earth: { graticule: false, projection: 'globe' } } };
-  const before = structuredClone(old);
-  expect(mergeTheme({ grid: { width: 2 } }, old.theme)).toEqual({ grid: { width: 2, color: '#123456', spacing: 32 }, future: true });
-  expect(normalizeSpace(old.space)).toEqual({ earth: { grid: 'off', projection: 'globe' } });
-  expect(normalizeSpace({ plane: { grid: { dots: { pitch: 4, step: 8 } } } })).toEqual({ plane: { grid: { dots: { step: 8 } } } });
-  expect(old).toEqual(before);
 });
 
 it('stores and exports the same native mapping values through both case and browser settings', () => {
@@ -61,4 +52,12 @@ it('drops obsolete views on import and export while preserving Network options a
   expect(saved.devices.map(row => row.ports)).toEqual(fixture.devices.map(row => row.ports));
   expect(saved.signals).toHaveLength(fixture.signals.length);
   expect(new CaseDocument(parseCase(JSON.stringify(saved))).export()).toEqual(saved);
+});
+
+it('collects only expression operands in match, palettes, symbols and WGSL', () => {
+  expect(fieldsIn({
+    marker: { symbol: { paths: ['$literal'], index: { match: '$class', cases: [['$literal', '$index']], otherwise: 0 } } },
+    color: { colormap: { kind: 'categorical', values: ['$ignored'] }, value: '$kv' },
+    custom: { wgsl: { source: '$ignored', inputs: ['$power'] } },
+  })).toEqual(['class', 'index', 'kv', 'power']);
 });

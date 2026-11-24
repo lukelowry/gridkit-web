@@ -6,7 +6,7 @@ import { drawingOf, positionOf, resolveNetwork, voltagePalette } from '../mappin
 import { createPreferences, type PreferencesState } from '../preferences/state.svelte.js';
 import { contrast, rgbOf } from '../ui/color.js';
 import { isGeographic } from './data.js';
-import { failuresOf, networkScene, type NetworkScene } from './scene.js';
+import { failuresOf, networkScene, tablesOf, type NetworkScene } from './scene.js';
 import { defaultMarks } from '../domain/views.js';
 
 const fixture = () => parseCase(JSON.stringify(input));
@@ -294,4 +294,12 @@ it('keeps additional native marks independent of catalog defaults and preserves 
     fields: target => document.fields(target) }, preferences: preferences.value, caseOverrides: document.views });
   expect(resolved.marks.find(mark => mark.id === 'additional')!.options).toEqual({ visible: true });
   expect(mark(scene(document), 'buses')!.radius).toEqual({ units: 0.02, atLeast: 2 });
+});
+
+it('frames only external case tables when a scene also has local symbols or geography', () => {
+  const input: NetworkScene = { entries: [], diagnostics: [], scene: {
+    space: { plane: { y: 'down' } }, tables: { Bus: { fields: { x: [1] } } },
+    marks: [{ vertices: 'Bus' }, { lines: ['map', 'Land'] }, { edges: ['case', 'Branch'] }],
+  } };
+  expect([...tablesOf(input)]).toEqual(['Branch']);
 });

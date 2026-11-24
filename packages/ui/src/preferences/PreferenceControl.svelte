@@ -1,9 +1,11 @@
 <script lang="ts">
   import { onDestroy, untrack } from 'svelte';
   import { watchNotice } from '../ui/toasts.svelte.js';
+  import LengthInput from '../ui/LengthInput.svelte';
+  import type { Length } from 'latkit';
   import type { PreferenceField } from './definitions.js';
   let { preference, value, label, id, disabled = false, onchange, oninvalid }: {
-    preference: PreferenceField; value: string | number | boolean; label: string; id: string; disabled?: boolean; oninvalid?: (invalid: boolean) => void;
+    preference: PreferenceField; value: string | Length | boolean; label: string; id: string; disabled?: boolean; oninvalid?: (invalid: boolean) => void;
     onchange: (value: unknown) => void;
   } = $props();
   let error = $state('');
@@ -34,6 +36,8 @@
       {:else}{#each run.options as option (option)}<option value={option}>{preference.labels[option] ?? title(option)}</option>{/each}{/if}
     {/each}
   </select>
+{:else if preference.kind === 'length'}
+  <LengthInput {id} {disabled} {label} value={value as Length} min={preference.min} max={preference.max} {onchange} />
 {:else if preference.kind === 'number'}
   <span class="c-field">
     <input {disabled} {id} type="number" aria-label={label} min={preference.min} max={preference.max} step={preference.step} value={Number(value)}

@@ -1,14 +1,15 @@
 <script lang="ts">
   import { readMark, type MappingOptions, type MarkDefinition } from '../domain/views.js';
   import type { MappingTransaction } from '../domain/views.js';
-  import { elementCatalog, elementFields, record, type CaseDocument, type ElementTarget, type SavedViews } from '@gridkit/library';
-  import { numericConstraint, numericIssue } from './numeric.js';
+  import { elementCatalog, record, type CaseDocument, type ElementTarget, type SavedViews } from '@gridkit/library';
+  import { categoryExamples, fieldMinimum, numericConstraint, numericIssue } from './numeric.js';
   import { watchNotice } from '../ui/toasts.svelte.js';
   import { errorMessage } from '../ui/errors.js';
   import type { PreferencesState } from '../preferences/state.svelte.js';
   import { resolveNetwork, networkTheme, paletteTokens, placementOf, effectiveOptions, drawingOf, positionOf, networkSpace, earthSpace } from './defaults.js';
   import type { OptionControl } from './encoding.js';
   import type { ColorFit } from '../ui/ramps.js';
+  import MarkDetails from './MarkDetails.svelte';
   import MappingRow, { type MappingDraft } from './MappingRow.svelte';
   import IconToggles from '../ui/IconToggles.svelte';
   import Icon from '../ui/Icon.svelte';
@@ -51,6 +52,7 @@
   const rows = (mark: MarkDefinition): Row[] => [
     { id: 'color', label: 'Color', option: 'color', control: 'color' },
     ...(mark.kind === 'vertices' ? [
+      { id: 'bearing', label: 'Bearing', option: 'bearing', control: 'number' as const, range: [0, 360] as const },
       { id: 'radius', label: 'Radius', option: 'radius', control: 'number' as const },
       { id: 'elevation', label: 'Elevation', option: 'elevation', control: 'number' as const, range: [0, height || 40] as const },
     ] : [
@@ -67,12 +69,14 @@
     drafts[key] = draft;
     oninvalid(Object.values(drafts).some(draft => !!draft.error));
   }
-  function map(mark: MarkDefinition, row: Row, next: unknown) {
-    const values = document.rows(mark.target.collection).filter(row => !mark.target.class || row.value.class === mark.target.class).map(elementFields);
-    const issue = numericIssue(next, numericConstraint(row.option), field => values.map(row => row[field]));
-    if (issue) throw new Error(issue);
+  function setOption(mark: MarkDefinition, key: keyof MappingOptions, value: unknown) {
     const target = { mark: mark.id };
-    onchange(tx => next === undefined ? tx.reset(target, row.option) : tx.map(target, row.option, next as Exclude<MappingOptions[keyof MappingOptions], undefined>));
+    onchange(tx => value === undefined ? tx.reset(target, key) : tx.map(target, key, value as Exclude<MappingOptions[typeof key], undefined>));
+  }
+  function map(mark: MarkDefinition, row: Row, next: unknown) {
+    const issue = numericIssue(next, numericConstraint(row.option), field => fieldMinimum(document, mark.target, field));
+    if (issue) throw new Error(issue);
+    setOption(mark, row.option, next);
   }
   /** An option of a few choices, drawn as the choices, or that is simply on or off. */
   type Choice = { option: 'marker' | 'visible' | 'position' | 'route' | 'dash'; label: string; icons?: readonly { value: string; label: string; icon: IconName }[] };
@@ -113,6 +117,16 @@
   }
 </script>
 
+{#if !earthSpace(resolved.space)}
+  <label class="property-row">Drawing Y axis
+    <select value={typeof resolved.space === 'object' && 'plane' in resolved.space ? resolved.space.plane.y ?? 'up' : 'up'}
+      onchange={({ currentTarget }) => onchange(tx => tx.view({ space: { plane: {
+        ...typeof resolved.space === 'object' && 'plane' in resolved.space && resolved.space.plane, y: currentTarget.value === 'down' ? 'down' : 'up',
+      } } }))}>
+      <option value="up">Up</option><option value="down">Down</option>
+    </select>
+  </label>
+{/if}
 {#if !marks.length}
   <p class="property-empty">No mappings in this view.</p>
   {#if value.network !== undefined}<button type="button" onclick={() => { if (window.confirm('Reset all mappings in this view?')) { onchange(tx => tx.resetView()); } }}>Reset view mappings</button>{/if}
@@ -123,16 +137,17 @@
   {@const fields = document.fields(mark.target)}
   {@const controls = rows(mark)}
   {@const options = choices(mark)}
-  {@const other = Object.keys(own).filter(key => !controls.some(row => row.option === key) && !options.some(row => row.option === key))}
-  {@const resettable = Object.keys(own).filter(key => controls.some(row => row.option === key) || options.some(row => row.option === key))}
+  {@const detailKeys = ['meet', 'markers', 'blend']}
+  {@const other = Object.keys(own).filter(key => !detailKeys.includes(key) && !controls.some(row => row.option === key) && !options.some(row => row.option === key))}
+  {@const resettable = Object.keys(own).filter(key => detailKeys.includes(key) || controls.some(row => row.option === key) || options.some(row => row.option === key))}
   <details class="mapping-section c-details" aria-label={markLabel(mark)} bind:open={() => opened[mark.id] ?? false, open => { opened[mark.id] = open; }}>
     <summary><Icon name="chevron" />{markLabel(mark)}</summary>
     <button type="button" class="reset-mark" aria-label={`Reset ${markLabel(mark)} mappings`} disabled={!resettable.length} onclick={() => resetMark(mark, resettable)}>Reset</button>
     {#each controls as row (row.id)}
       {@const key = draftKey(mark, row.id)}
       {#key key}
-        <MappingRow label={row.label} control={row.control} value={rowValue(own, row)} inherited={rowValue(base, row)} unset={row.unset} fields={row.control !== 'label' ? sampled(mark.target) : fields} range={row.range} constraint={numericConstraint(row.option)} allowMissing={scope === 'browser'}
-          {fit} draft={drafts[key]} ondraft={draft => setDraft(key, draft)} onchange={next => map(mark, row, next)} />
+        <MappingRow label={row.label} control={row.control} value={rowValue(own, row)} inherited={rowValue(base, row)} unset={row.unset} fields={sampled(mark.target)} range={row.range} constraint={numericConstraint(row.option)} allowMissing={scope === 'browser'}
+          {fit} samples={name => categoryExamples(document, mark.target, name)} draft={drafts[key]} ondraft={draft => setDraft(key, draft)} onchange={next => map(mark, row, next)} />
       {/key}
     {/each}
     {#each options as row (row.option)}
@@ -149,6 +164,7 @@
         </div>
       </div>
     {/each}
+    <MarkDetails kind={mark.kind} labelSize={resolved.theme.text?.size ?? 12} options={{ ...base, ...own }} {fields} onchange={(key, next) => setOption(mark, key, next)} />
     {#if other.length}<p class="property-empty">Other saved mappings are preserved: {other.join(', ')}.</p>{/if}
   </details>
 {/each}

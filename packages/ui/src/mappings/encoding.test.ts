@@ -78,8 +78,8 @@ describe('encodings preserve latkit values', () => {
     const limit = numericConstraint('radius');
     expect(nodeOf({ kind: 'fixed', value: 0 }, limit)).toBe(0);
     expect(numericIssue({ scale: [-1, 10], value: '$params.kv' }, limit)).toContain('at least 0');
-    expect(numericIssue('$params.kv', limit, () => [100, -1])).toContain('Use an output range');
-    expect(numericIssue('$params.kv', limit, () => [100, undefined])).toBeNull();
+    expect(numericIssue('$params.kv', limit, () => -1)).toContain('Use an output range');
+    expect(numericIssue('$params.kv', limit, () => 100)).toBeNull();
     expect(numericIssue(-10, numericConstraint('elevation'))).toBeNull();
   });
   it('sums an option up in a few words', () => {
@@ -92,4 +92,11 @@ describe('encodings preserve latkit values', () => {
     expect(encodingSummary({ kind: 'formula', node: { units: 2, atMost: 5 } }, 'number', name, '')).toBe('Up to 5');
     expect(encodingSummary({ kind: 'formula', node: { abs: '$x' } }, 'number', name, '')).toBe('Formula');
   });
+});
+
+it('retains structured label placement and drawing-unit size when editing its field', () => {
+  const label = { text: '$name', place: 'left', offset: [2, { units: -1 }], size: { units: 0.7 } };
+  const encoding = encodingOf(label, 'label');
+  expect(encoding.kind).toBe('field');
+  expect(labelNode(encoding)).toEqual(label);
 });

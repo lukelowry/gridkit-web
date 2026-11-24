@@ -44,26 +44,45 @@ export function json<T>(value: T): T {
   if (encoded === undefined) throw new Error('Mappings must be JSON.');
   return JSON.parse(encoded) as T;
 }
-/** Fields read locally by native expressions; joins and literal text arguments are not local fields. */
+const literals = new Set(['colormap', 'font', 'from', 'paths', 'images', 'colors', 'legend', 'source']);
+
+/** Visit every local read. Allocate a replacement branch only when the visitor changes a leaf. */
+export function mapFieldReads(value: unknown, visit: (name: string, original: unknown) => unknown): unknown {
+  function array(items: unknown[], transform: (item: unknown, index: number) => unknown): unknown[] {
+    let result: unknown[] | undefined;
+    items.forEach((item, i) => {
+      const next = transform(item, i);
+      if (next !== item) (result ??= items.slice())[i] = next;
+    });
+    return result ?? items;
+  }
+  function walk(node: unknown): unknown {
+    if (typeof node === 'string' && node.startsWith('$')) return visit(node.slice(1), node);
+    if (Array.isArray(node)) return array(node, walk);
+    const expr = record(node);
+    if (!expr) return node;
+    if (typeof expr.field === 'string') {
+      if (typeof expr.of === 'string') { visit(expr.of, node); return node; }
+      return expr.from == null ? visit(expr.field, node) : node;
+    }
+    let result: Record<string, unknown> | undefined;
+    for (const [key, child] of Object.entries(expr)) {
+      if (literals.has(key)) continue;
+      let next: unknown;
+      if ((key === 'is' || key === 'contains') && Array.isArray(child))
+        next = array(child, (item, i) => i === 0 ? walk(item) : item);
+      else if (key === 'cases' && 'match' in expr && Array.isArray(child))
+        next = array(child, pair => Array.isArray(pair) ? array(pair, (item, i) => i === 1 ? walk(item) : item) : pair);
+      else next = walk(child);
+      if (next !== child) (result ??= { ...expr })[key] = next;
+    }
+    return result ?? node;
+  }
+  return walk(value);
+}
 export function fieldsIn(value: unknown): readonly string[] {
   const fields = new Set<string>();
-  function visit(node: unknown) {
-    if (typeof node === 'string' && node.startsWith('$')) fields.add(node.slice(1));
-    else if (Array.isArray(node)) node.forEach(visit);
-    else if (record(node)) {
-      const expression = record(node)!;
-      if (typeof expression.field === 'string') {
-        if (typeof expression.of === 'string') fields.add(expression.of);
-        else if (expression.from == null) fields.add(expression.field);
-        return;
-      }
-      for (const [key, child] of Object.entries(expression)) {
-        if ((key === 'is' || key === 'contains') && Array.isArray(child)) visit(child[0]);
-        else if (!['colormap', 'font', 'from'].includes(key)) visit(child);
-      }
-    }
-  }
-  visit(value);
+  mapFieldReads(value, (name, node) => { fields.add(name); return node; });
   return [...fields];
 }
 /** Latkit reads through a reference or joins another dataset; those two forms cannot be combined. */
@@ -103,39 +122,6 @@ export function readMark(value: unknown): MarkDefinition | null {
   return mark as unknown as MarkDefinition;
 }
 
-/** Read older grid options without changing the saved mappings or their exported case. */
-export function normalizeSpace(value: unknown): Scene['space'] {
-  const space = record(value);
-  if (!space) return value as Scene['space'];
-  const next = { ...space };
-  for (const kind of ['earth', 'plane']) {
-    const options = record(space[kind]);
-    if (!options) continue;
-    const { graticule, ...current } = options;
-    let grid = current.grid ?? (graticule === undefined ? undefined : graticule ? 'lines' : 'off');
-    const pattern = record(grid);
-    if (pattern) {
-      grid = { ...pattern };
-      for (const style of ['lines', 'dots']) {
-        const settings = record(pattern[style]);
-        if (!settings || !Object.hasOwn(settings, 'pitch')) continue;
-        const { pitch, ...rest } = settings;
-        (grid as Record<string, unknown>)[style] = { ...rest, step: rest.step ?? pitch };
-      }
-    }
-    next[kind] = { ...current, ...grid === undefined ? {} : { grid } };
-  }
-  return next as Scene['space'];
-}
-
-function normalizeTheme(input: Exclude<Theme, string> | Record<string, unknown>): Exclude<Theme, string> {
-  const { gridSpacing, ...theme } = input as Record<string, unknown>;
-  const grid = typeof theme.grid === 'string' ? { color: theme.grid } : record(theme.grid);
-  if (grid || gridSpacing !== undefined) theme.grid = { ...grid,
-    ...grid?.spacing === undefined && gridSpacing !== undefined ? { spacing: gridSpacing } : {} };
-  return theme as Exclude<Theme, string>;
-}
-
 /** Theme groups inherit independently, just as options inherit within each group in latkit. */
 export function mergeTheme(base: Exclude<Theme, string>, override: Exclude<Theme, string> | Record<string, unknown>): Exclude<Theme, string> {
   function merge(before: unknown, after: unknown): unknown {
@@ -145,7 +131,7 @@ export function mergeTheme(base: Exclude<Theme, string>, override: Exclude<Theme
     for (const [key, value] of Object.entries(group)) result[key] = merge(result[key], value);
     return result;
   }
-  return merge(normalizeTheme(base), normalizeTheme(override)) as Exclude<Theme, string>;
+  return merge(base, override) as Exclude<Theme, string>;
 }
 
 /** Edits to `saved` views, each validated as it is made; the views keep the catalog's marks until one is edited. */

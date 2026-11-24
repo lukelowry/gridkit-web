@@ -14,13 +14,13 @@ export type Encoding =
   | { kind: 'inherit' }
   | { kind: 'off' }
   | { kind: 'fixed'; value: number | string }
-  | { kind: 'field'; field: string; maxWidth?: number }
+  | { kind: 'field'; field: string; maxWidth?: number; style?: Record<string, unknown> }
   | { kind: 'colormap'; field: string; colormap: Colormap; domain?: Domain }
   | { kind: 'scale'; field: string; scale: [low: number, high: number]; domain?: Domain }
   | { kind: 'formula'; node: unknown };
 
 export function fieldCompatible(info: FieldInfo, control: OptionControl) {
-  return fieldGroup(info.id) !== null && (control === 'label' ? ['text', 'number'].includes(info.kind ?? '') : info.kind === 'number');
+  return fieldGroup(info.id) !== null && (info.kind === 'number' || control !== 'speed' && info.kind === 'text');
 }
 
 const isPair = (input: unknown): input is [number, number] => Array.isArray(input) && input.length === 2 && input.every(n => typeof n === 'number');
@@ -35,9 +35,10 @@ export function encodingOf(node: unknown, control: OptionControl): Encoding {
   const formula: Encoding = { kind: 'formula', node };
   if (control === 'label') {
     const label = record(node);
-    if (!label || Object.keys(label).some(key => !['text', 'maxWidth'].includes(key)) || (label.maxWidth !== undefined && typeof label.maxWidth !== 'number')) return formula;
-    const text = recognize(label.text);
-    return text.kind === 'field' ? { kind: 'field', field: text.field, ...typeof label.maxWidth === 'number' ? { maxWidth: label.maxWidth } : {} } : formula;
+    if (!label || Object.keys(label).some(key => !['text', 'maxWidth', 'size', 'place', 'offset'].includes(key)) || (label.maxWidth !== undefined && typeof label.maxWidth !== 'number')) return formula;
+    const { text: content, maxWidth, ...style } = label;
+    const text = recognize(content);
+    return text.kind === 'field' ? { kind: 'field', field: text.field, ...Object.keys(style).length && { style }, ...typeof maxWidth === 'number' ? { maxWidth } : {} } : formula;
   }
   const preset = recognize(node);
   if (preset.kind === 'constant') return (control === 'color' ? typeof node === 'string' : typeof node === 'number') ? { kind: 'fixed', value: node as number | string } : formula;
@@ -68,7 +69,7 @@ export function nodeOf(encoding: Encoding, constraint?: NumericConstraint): unkn
     case 'field': {
       const value = field(encoding.field).toJSON();
       if (encoding.maxWidth !== undefined && encoding.maxWidth <= 0) throw new Error('Label width must be greater than zero.');
-      return encoding.maxWidth === undefined ? value : { text: value, maxWidth: encoding.maxWidth };
+      return encoding.maxWidth === undefined && !encoding.style ? value : { ...encoding.style, text: value, ...encoding.maxWidth !== undefined && { maxWidth: encoding.maxWidth } };
     }
     case 'colormap': return { colormap: encoding.colormap, value: field(encoding.field).toJSON(), ...domained(encoding.domain) };
     case 'scale': {
@@ -81,7 +82,7 @@ export function nodeOf(encoding: Encoding, constraint?: NumericConstraint): unkn
 /** A label reads a field as its text. */
 export const labelNode = (encoding: Encoding, constraint?: NumericConstraint) => {
   const node = nodeOf(encoding, constraint);
-  return encoding.kind === 'field' && encoding.maxWidth === undefined ? { text: node } : node;
+  return encoding.kind === 'field' && encoding.maxWidth === undefined && !encoding.style ? { text: node } : node;
 };
 
 /** What an option is set to, in a few words: `name` names a field. */

@@ -119,3 +119,16 @@ it('serializes overlapping previews and restores the view after a failed capture
   release(); await failed; await second;
   expect(mocks.shots).toHaveLength(2); expect(view).toEqual(before);
 });
+
+it('scales each explicit label in its native unit and restores the interactive scene', async () => {
+  const scene: Scene = { space: 'plane', marks: [
+    { vertices: ['case', 'Bus'], label: { text: '$name', size: { units: 0.5 }, place: 'right' } },
+    { edges: ['case', 'Branch'], label: { text: '$name', size: 10 } },
+  ] };
+  const view = live(scene, { zoom: 1 });
+  await picture({ view, canvas: [240, 180] }, new WritableStream(), { ...shownAs([240, 180], 1, 2), format: 'png' });
+  expect(mocks.shots[0]?.scenes[0]?.marks).toMatchObject([
+    { label: { size: { units: 1 }, place: 'right' } }, { label: { size: 20 } },
+  ]);
+  expect(view.scene).toBe(scene);
+});

@@ -17,6 +17,7 @@
   import { themeColors } from '../ui/color.js';
   import { reload } from '../ui/errors.js';
   import type { MenuItem } from '../ui/menu.js';
+  import { record } from '@gridkit/library';
   import { dataset, refOf, rowsOf, tables } from './data.js';
   import { networkScene, spaceOf, tablesOf, themeOf } from './scene.js';
   import type { ExportRequest } from './export.js';
@@ -88,6 +89,12 @@
     if (!row) return [];
     const entry = entryOf(document, row);
     return [verb + ': ' + entry.class + ' ' + entry.label + (entry.name ? ' (' + entry.name + ')' : '')];
+  }).join('. '));
+  const categoryLabels = $derived(scene.entries.flatMap(entry => {
+    const mark = entry?.mark, map = record(record(mark?.options.color)?.colormap);
+    if (map?.kind !== 'categorical' || mark?.options.legend === null) return [];
+    const names = map.categories ?? map.values;
+    return Array.isArray(names) ? [mark!.id + ': ' + names.join(', ')] : [];
   }).join('. '));
   const rows = $derived(tables(document));
   const extra = (): Source[] => [...geography.map(layer => layer.data), ...run?.sources ?? []];
@@ -236,7 +243,7 @@
 </script>
 
 <div class="network-view">
-  <span class="sr-only" id={inspectionId}>{inspection}</span>
+  <span class="sr-only" id={inspectionId}>{inspection} {categoryLabels}</span>
   <canvas bind:this={canvas} hidden={!active} aria-busy={active && !fault && (!host.ready || geographyPending)} aria-label="Network view" aria-describedby={inspectionId} data-ready={host.ready} tabindex="0"></canvas>
   <LoadingBar busy={active && !fault && !empty && (!host.ready || geographyPending)} label="Loading network" />
   {#if active && empty}

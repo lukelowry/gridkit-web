@@ -27,19 +27,27 @@ try {
   });
   console.log(environment.renderer);
   const scenarios = [];
-  for (const [size, budget] of [[100_000, 256], [1_000_000, 256], [1_000_000, 32]] as const) {
-    await page.goto(address); // Each scenario owns a fresh GPU and an empty app.
-    const measured = await page.evaluate(async ({ size, budget }) => {
-      const url = '/tests/performance.ts';
-      const { measureNetwork } = await import(url) as typeof import('./performance.js');
-      return measureNetwork(size, budget);
-    }, { size, budget });
-    scenarios.push(measured);
-    console.log(JSON.stringify(measured));
-  }
-  if (failures.length) throw new Error(failures.join('\n'));
   const directory = new URL('../../../output/playwright/', import.meta.url);
   await mkdir(directory, { recursive: true });
-  await writeFile(new URL('latkit-performance.json', directory), JSON.stringify({ environment, realCaseOpenMs, scenarios }, null, 2));
+  const workloads = [
+    [100_000, 256, 'plain'], [1_000_000, 256, 'plain'], [1_000_000, 32, 'plain'],
+    [1_000_000, 256, 'markers'], [1_000_000, 256, 'halos'], [1_000_000, 256, 'labels'],
+  ] as const;
+  for (const [size, budget, detail] of workloads) {
+    await page.goto(address);
+    try {
+      const measured = await page.evaluate(async ({ size, budget, detail }) => {
+        const url = '/tests/performance.ts';
+        const { measureNetwork } = await import(url) as typeof import('./performance.js');
+        return measureNetwork(size, budget, detail);
+      }, { size, budget, detail });
+      scenarios.push(measured);
+    } catch (error) {
+      scenarios.push({ size, budgetMiB: budget, detail, error: error instanceof Error ? error.message : String(error) });
+    }
+    console.log(JSON.stringify(scenarios.at(-1)));
+    await writeFile(new URL('latkit-performance.json', directory), JSON.stringify({ environment, realCaseOpenMs, scenarios, failures }, null, 2));
+  }
+  if (failures.length || scenarios.some(s => 'error' in s)) throw new Error('One or more browser scenarios failed. See latkit-performance.json.');
   console.log(`ACTIVSg10k open: ${realCaseOpenMs} ms; report: output/playwright/latkit-performance.json`);
 } finally { await browser.close(); }

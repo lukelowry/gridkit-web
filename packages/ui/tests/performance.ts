@@ -41,7 +41,7 @@ async function phase(gpu: Gpu, view: View, change: (frame: number) => void) {
 }
 
 /** Browser-only probe, loaded by performance.probe.ts through the development server. Never included in the app build. */
-export async function measureNetwork(size: number, budgetMiB: number) {
+export async function measureNetwork(size: number, budgetMiB: number, detail: 'plain' | 'markers' | 'halos' | 'labels' = 'plain') {
   const gpu = await Gpu.create();
   gpu.budget = { ...gpu.budget, bytes: Math.min(gpu.budget.bytes, budgetMiB * 1024 * 1024) };
   const data = new Data('benchmark'), samples = new Data('benchmark-results').axis('Time', 's');
@@ -52,6 +52,7 @@ export async function measureNetwork(size: number, budgetMiB: number) {
   try {
     const side = Math.ceil(Math.sqrt(size));
     data.replace('Bus', { count: size }, {
+      ...(detail === 'labels' && { caption: Array.from({ length: size }, (_, i) => String(i)) }),
       x: Float64Array.from({ length: size }, (_, i) => i % side),
       y: Float64Array.from({ length: size }, (_, i) => Math.floor(i / side)),
     });
@@ -66,15 +67,17 @@ export async function measureNetwork(size: number, budgetMiB: number) {
     const voltage = field('Vm').from(['benchmark-results', 'Bus']), started = performance.now();
     // Branches under buses, as the network draws them, with the editor's controls: comets draw at its default frame rate.
     const sceneWith = (flow: number): Scene => ({
-      space: 'plane', layout: 'none', ease: 0, theme: { base: 'light' }, controls: controlsOf(defaults, 'full'),
+      space: 'plane', layout: 'none', ease: 0, theme: { base: 'light', ...detail === 'halos' && { edge: { halo: 1 } } }, controls: controlsOf(defaults, 'full'),
       marks: [
-        { edges: ['benchmark', 'Branch'], ends: ['from', 'to'], width: 0.7, ...flow ? { flow } : {} },
-        { vertices: ['benchmark', 'Bus'], position: ['$x', '$y'], elevation: voltage.scale(0, 15).domain(0, 1),
+        { edges: ['benchmark', 'Branch'], ends: ['from', 'to'], width: 0.7, ...detail === 'markers' && { markers: [{ marker: 'rectangle', at: 0.5, size: 4 }] }, ...flow ? { flow } : {} },
+        { vertices: ['benchmark', 'Bus'], position: ['$x', '$y'], ...detail === 'labels' && { label: { text: '$caption', place: 'right' } }, elevation: voltage.scale(0, 15).domain(0, 1),
           radius: { units: 0.15, atLeast: 0.5, atMost: 4 }, color: voltage.colormap('viridis').domain(0, 1) },
       ],
     });
     view = await View.create(canvas, sceneWith(0), { gpu, sources: [data, samples], camera: { pitch: 45 } });
-    await view.done({ signal: AbortSignal.timeout(30_000) });
+    try { await view.done({ signal: AbortSignal.timeout(30_000) }); }
+    catch (error) { throw new Error('Initial draw failed (' + (error instanceof Error ? error.message : String(error)) + '): ' + JSON.stringify({ waiting: view.waiting, resident: gpu.resident,
+      frames: view.stats.frames, failures: view.failures.map(f => f.message) }), { cause: error }); }
     const openMs = performance.now() - started, before = gpu.work, camera = view.camera;
     const play = (frame: number) => { view!.at = (frame % 60) / 20; };
     // The camera and the time shown move every frame, so every mark draws, each frame.
@@ -116,7 +119,7 @@ export async function measureNetwork(size: number, budgetMiB: number) {
       await pause(10);
     }
     await view.done({ signal: AbortSignal.timeout(30_000) });
-    return { size, budgetMiB, openMs, moving, playing, hovering, comets, pickP50: percentile(picks, 0.5),
+    return { size, budgetMiB, detail, openMs, moving, playing, hovering, comets, pickP50: percentile(picks, 0.5),
       instances: stats.instances, resident: gpu.resident, uploaded: work.uploaded - before.uploaded,
       evaluated: work.evaluated - before.evaluated, late: work.late - before.late,
       recoveryMs: performance.now() - recovery, idle: true };

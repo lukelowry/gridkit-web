@@ -1,6 +1,6 @@
 <script lang="ts">
   import { watchNotice } from '../ui/toasts.svelte.js';
-  import type { Colormap } from 'latkit';
+  import { field, type CustomColormap, type Colormap } from 'latkit';
   import type { FieldInfo } from '@gridkit/library';
   import { errorMessage } from '../ui/errors.js';
   import { sampledName } from '../simulation/sampled.js';
@@ -10,6 +10,7 @@
   import Popover from '../ui/Popover.svelte';
   import { voltagePalette } from './defaults.js';
   import { encodingOf, encodingSummary, labelNode, nodeOf, type Domain, type Encoding, type OptionControl } from './encoding.js';
+  import CategoryColors from './CategoryColors.svelte';
   import FieldPicker from './FieldPicker.svelte';
   import SwatchRadio from '../ui/SwatchRadio.svelte';
   import type { NumericConstraint } from './numeric.js';
@@ -17,8 +18,9 @@
 
   /** Text typed that is not yet a mapping, kept across pages until it is; Apply waits while it has an error. */
   export interface MappingDraft { readonly texts?: Readonly<Record<string, string>>; readonly error?: string }
-  let { label, control, value, inherited, unset = 'None', fields, draft, ondraft, onchange, range = [3, 12], constraint, allowMissing = false, fit }: {
+  let { label, control, value, inherited, unset = 'None', fields, draft, ondraft, onchange, samples, range = [3, 12], constraint, allowMissing = false, fit }: {
     label: string; control: OptionControl; value: unknown; inherited: unknown; unset?: string | undefined; fields: readonly FieldInfo[];
+    samples: (name: string) => (string | number)[];
     draft?: MappingDraft | undefined; ondraft: (draft: MappingDraft) => void;
     onchange: (value: unknown) => void; range?: readonly [number, number] | undefined;
     constraint?: NumericConstraint | undefined; allowMissing?: boolean; fit: ColorFit;
@@ -72,14 +74,28 @@
     if (!otherText.trim()) { ondraft({ texts: { ...texts, [names[end]]: input }, error: `Enter both ends of ${named}.` }); return; }
     typed(names[end], input, number => make(end === 0 ? [number, Number(otherText)] : [Number(otherText), number]), named);
   }
+  function categoriesFor(name: string): CustomColormap {
+    const values = samples(name);
+    if (!values.length) values.push(fields.find(f => f.id === name)?.kind === 'text' ? 'Category 1' : 1);
+    const colors = ['#0072b2', '#e69f00', '#009e73', '#cc79a7', '#d55e00', '#56b4e9', '#785da7', '#737373'];
+    return { kind: 'categorical', values, categories: values.map(String), colors: values.map((_, i) => colors[i % colors.length]!) };
+  }
+  const categoryMap = $derived(own.kind === 'colormap' && typeof own.colormap === 'object' && own.colormap.kind === 'categorical' ? own.colormap : null);
+  function matchValues(name: string) {
+    const values = samples(name);
+    if (!values.length) values.push(fields.find(info => info.id === name)?.kind === 'text' ? 'Category 1' : 0);
+    writing = true;
+    setFormula(JSON.stringify(field(name).match(values.map((v, i) => [v, range[0] + i]), range[0]).toJSON(), null, 2));
+  }
   function choose(next: string) {
     writing = next === 'formula';
     if (next === 'formula') { formula = JSON.stringify(value === undefined ? inherited ?? null : value, null, 2); ondraft({}); }
     else if (next === 'default') { apply({ kind: 'inherit' }); popover?.close(); }
     else if (next === 'off') { apply({ kind: 'off' }); popover?.close(); }
     else if (next === 'fixed') { if (own.kind !== 'fixed') apply({ kind: 'fixed', value: control === 'color' ? '#808080' : control === 'speed' ? range[1] : range[0] }); }
-    else if (control === 'label') apply({ kind: 'field', field: next, ...own.kind === 'field' && own.maxWidth !== undefined ? { maxWidth: own.maxWidth } : {} });
-    else if (control === 'color') apply({ kind: 'colormap', field: next, colormap: own.kind === 'colormap' ? own.colormap : 'viridis' });
+    else if (control === 'label') apply({ kind: 'field', field: next, ...own.kind === 'field' && own.style && { style: own.style }, ...own.kind === 'field' && own.maxWidth !== undefined ? { maxWidth: own.maxWidth } : {} });
+    else if (control === 'color') apply({ kind: 'colormap', field: next, colormap: fields.find(f => f.id === next)?.kind === 'text' ? categoriesFor(next) : own.kind === 'colormap' && !categoryMap ? own.colormap : 'viridis' });
+    else if (control === 'number' && fields.find(info => info.id === next)?.kind === 'text') matchValues(next);
     else if (control === 'speed') apply({ kind: 'scale', field: next, scale: own.kind === 'scale' ? own.scale : [range[0], range[1]], domain: reachOf(next) });
     else apply({ kind: 'scale', field: next, scale: own.kind === 'scale' ? own.scale : [range[0], range[1]] });
   }
@@ -169,6 +185,12 @@
                   </div>
                 {/if}
                 {#if own.kind === 'colormap'}
+                  {#if categoryMap}
+                    <CategoryColors map={categoryMap} numeric={output?.kind !== 'text'} onchange={colormap => apply({ kind: 'colormap', field: mapped!.field, colormap })} />
+                  {:else}
+                    <button type="button" onclick={() => apply({ kind: 'colormap', field: mapped!.field, colormap: categoriesFor(mapped!.field) })}>Map distinct values</button>
+                  {/if}
+                  {#if output?.kind !== 'text'}
                   <div class="palettes" role="radiogroup" aria-label={`${label} palette`}>
                     {#if isVoltage(own.colormap) || mapped?.field === 'params.kv'}
                       <SwatchRadio name={id + '-palette'} label="Voltage levels" checked={isVoltage(own.colormap)} background={rampCss(voltages[0]!, fit)}
@@ -182,6 +204,7 @@
                         onchange={() => apply({ ...own, colormap: map.name } as Encoding)} />
                     {/each}
                   </div>
+                  {/if}
                 {/if}
                 {#if control === 'speed' && mapped}
                   <!-- Either way at once: the field at ±its range moves at ±the speed, and no value moves nothing. -->
@@ -205,6 +228,7 @@
                   </div>
                 {/if}
                 {#if control === 'number' && mapped}
+                  <button type="button" onclick={() => matchValues(mapped!.field)}>Match distinct values</button>
                   <div class="line"><span class="property-label">Output</span>
                     <div class="pair">
                       <input aria-label={`${label} minimum`} aria-invalid={!!draft?.error || undefined} aria-describedby={draft?.error ? `${id}-error` : undefined} type="number" min={constraint ? 0 : undefined} step="any" placeholder="Direct" value={texts.low ?? (scaled ? String(scaled.scale[0]) : '')}
@@ -214,7 +238,7 @@
                     </div>
                   </div>
                 {/if}
-                {#if ranged && control !== 'speed'}
+                {#if ranged && !categoryMap && control !== 'speed'}
                   <div class="line"><span class="property-label">Range</span>
                     {#if deviating}
                       <span class="c-field"><span class="c-field__suffix">±</span>

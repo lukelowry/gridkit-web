@@ -1,7 +1,7 @@
 import { untrack } from 'svelte';
 import { field, type Expr, type ExprInput } from 'latkit';
 import { record, targetKey, type CaseDocument, type ElementTarget, type FieldInfo, type SavedViews } from '@gridkit/library';
-import { defaultMarks, fieldsIn } from '../domain/views.js';
+import { defaultMarks, mapFieldReads, fieldsIn } from '../domain/views.js';
 import { resolveMappings } from '../mappings/resolve.js';
 import { outputLabel } from './channels.js';
 import { recordableOutputs, type Channel, type WantedOutput } from '@gridkit/library/gridkit';
@@ -67,7 +67,7 @@ export function simulationFields(document: CaseDocument): FieldLookup {
 export function mappedOutputs(document: CaseDocument, userDefaults: SavedViews, caseOverrides: SavedViews): WantedOutput[] {
   const { marks } = resolveMappings(defaultMarks(document.targets), userDefaults.network, caseOverrides.network, simulationFields(document), true);
   const wanted = new Map<string, WantedOutput>();
-  for (const mark of marks) for (const name of fieldsIn(Object.values(mark.options)).flatMap(id => sampledName(id) ?? [])) {
+  for (const mark of marks) for (const name of fieldsIn(mark.options).flatMap(id => sampledName(id) ?? [])) {
     const want: WantedOutput = { ...mark.target, output: measureOf(name).output };
     wanted.set(JSON.stringify([want.collection, want.class ?? null, want.output]), want);
   }
@@ -88,17 +88,13 @@ export function sampledExpression(name: string, target: ElementTarget): Expr {
 
 /** Translate the UI's field names to what the recording holds. The case's static data never changes. */
 export function simulationExpression(value: unknown, available: boolean, target: ElementTarget = { collection: 'buses' }): unknown {
-  if (typeof value === 'string' && value.startsWith('$simulation.'))
-    return available ? sampledExpression(value.slice(12), target).toJSON() : null;
-  if (Array.isArray(value)) return value.map(child => simulationExpression(child, available, target));
-  const node = record(value);
-  if (!node) return value;
-  if (typeof node.field === 'string' && node.field.startsWith('simulation.')) {
+  return mapFieldReads(value, (name, original) => {
+    const field = sampledName(name);
+    if (!field) return original;
     if (!available) return null;
-    const read = sampledExpression(node.field.slice(11), target);
-    return (node.step === true ? read.step() : read).toJSON();
-  }
-  return Object.fromEntries(Object.entries(node).map(([key, child]) => [key, simulationExpression(child, available, target)]));
+    const read = sampledExpression(field, target);
+    return (record(original)?.step === true ? read.step() : read).toJSON();
+  });
 }
 
 /**
@@ -106,14 +102,27 @@ export function simulationExpression(value: unknown, available: boolean, target:
  * hides a good color or elevation. A sampled scale or colormap without a domain holds still as time moves: a deviation across its
  * symmetric band, so no change stays the middle of the map, anything else over every recorded value.
  */
-export function simulationOption(value: unknown, available: boolean | ReadonlySet<string>, target: ElementTarget, fallback: ExprInput): unknown {
+export function simulationOption(value: unknown, available: boolean | ReadonlySet<string>, target: ElementTarget, fallback: ExprInput, property?: string): unknown {
+  if (property === 'legend') return value;
   const signals = fieldsIn(value).flatMap(name => sampledName(name) ?? []);
   if (!signals.length) return value;
+  const apply = (child: unknown, key: string, missing: ExprInput = 0) => simulationOption(child, available, target, missing, key);
+  const node = record(value);
+  if (Array.isArray(value) && ['markers', 'offset', 'position', 'size', 'blend', 'slices', 'inputs'].includes(property ?? ''))
+    return value.map(child => apply(child, property === 'markers' ? 'strokeMarker' : 'component'));
+  if (node && (property === 'strokeMarker' || property === 'marker' || property === 'label' && 'text' in node ||
+      ['symbol', 'icon', 'gauge', 'pie', 'wgsl'].includes(property ?? '') || 'units' in node)) {
+    return Object.fromEntries(Object.entries(node).map(([key, child]) => {
+      if (['paths', 'images', 'colors', 'source', 'font'].includes(key)) return [key, child];
+      const missing = key === 'visible' ? false : key === 'text' ? '' : key === 'color' ? null : 0;
+      return [key, apply(child, key, missing)];
+    }));
+  }
   // The catalog may advertise an output before its samples arrive; arrival changes this option's expression. Every measure of an
   // output reads what the recording holds of it.
   if (!available || (typeof available !== 'boolean' && signals.some(name => !available.has(measureOf(name).output)))) return fallback;
-  const node = record(value), measure = measureOf(signals[0]!);
+  const measure = measureOf(signals[0]!);
   const band = measure.basis === 'value' ? null : defaultBand(measure);
-  const mapped = node && ('colormap' in node || 'scale' in node) && node.domain === undefined ? { ...node, domain: band ? [-band, band] : 'all' } : value;
+  const mapped = node && ('colormap' in node || 'scale' in node) && record(node.colormap)?.kind !== 'categorical' && node.domain === undefined ? { ...node, domain: band ? [-band, band] : 'all' } : value;
   return { fallback: [simulationExpression(mapped, true, target), fallback] };
 }

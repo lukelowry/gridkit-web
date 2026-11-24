@@ -35,3 +35,8 @@ it('colors and raises a bus by its measure: as recorded on its own map, a deviat
   expect(measureHeight({ output: 'Vm', basis: 'change' }, 20, 0.02)).toEqual({ scale: [0, 20], value: '$simulation.Vm~change', domain: [-0.02, 0.02] });
 });
 
+
+it('labels each exact category at the center of its swatch', () => {
+  const map = { kind: 'categorical' as const, values: ['A', 'B'], categories: ['North', 'South'], colors: ['red', 'blue'] };
+  expect(scaleTicks(map, null, false)).toEqual([{ at: 0.25, text: 'North' }, { at: 0.75, text: 'South' }]);
+});

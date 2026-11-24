@@ -559,3 +559,43 @@ test('view mappings apply, cancel and reset without changing the case', async ({
   await openMappings(page);
   await expect(shape.getByRole('button', { name: 'Rectangle', exact: true })).toHaveAttribute('aria-pressed', 'true');
 });
+
+test('applies native category colors, branch symbols and drawing coordinates', async ({ page }) => {
+  await openCase(page);
+  await openMappings(page);
+  await page.getByRole('radio', { name: 'Browser defaults', exact: true }).check();
+  await page.getByRole('button', { name: 'Network layout', exact: true }).click();
+  await page.getByLabel('Drawing Y axis').selectOption('down');
+  await page.getByText('Symbol and label', { exact: true }).click();
+  await page.getByLabel('Bus display').selectOption('symbol');
+  await expect(page.getByLabel('Bus symbol preview')).toBeVisible();
+  await page.getByLabel('Bus symbol outline').check();
+  await page.getByLabel('Bus symbol stroke width units').selectOption('units');
+  await mapField(page, 'Color', 'Class');
+  await page.getByRole('button', { name: 'Color mapping', exact: true }).click();
+  await page.getByLabel('Category 1 label', { exact: true }).fill('Grid buses');
+  await page.getByLabel('Category 1 label', { exact: true }).press('Tab');
+  await page.keyboard.press('Escape');
+  await page.locator('details[aria-label="Branches"] > summary').click();
+  await page.getByText('Branch symbols and labels', { exact: true }).first().click();
+  await page.getByLabel('Edge attachment').selectOption('nearest');
+  await page.getByLabel('Endpoint color transition').selectOption('gradual');
+  await page.getByLabel('Blend Start').fill('0.3');
+  await page.getByLabel('Blend Start').press('Tab');
+  await page.getByRole('button', { name: 'Add branch marker', exact: true }).click();
+  await page.getByLabel('Marker 1 Size units').selectOption('units');
+  await page.getByLabel('Marker 1 Position').fill('0.4');
+  await page.getByLabel('Marker 1 Position').press('Tab');
+  await page.getByRole('button', { name: 'Apply', exact: true }).click();
+  const mappings = await page.evaluate(() => JSON.parse(localStorage.getItem('gridkit.preferences')!).mappings.network);
+  expect(mappings.space.plane.y).toBe('down');
+  expect(mappings.marks).toEqual(expect.arrayContaining([
+    expect.objectContaining({ id: 'branches', options: expect.objectContaining({ meet: 'nearest', blend: [0.3, 1], markers: [{ marker: 'rectangle', at: 0.4, size: { units: 1 } }] }) }),
+    expect.objectContaining({ id: 'buses', options: expect.objectContaining({ marker: { symbol: expect.objectContaining({ stroke: { units: 1 } }) }, color: expect.objectContaining({
+      colormap: expect.objectContaining({ kind: 'categorical', categories: ['Grid buses'] }),
+    }) }) }),
+  ]));
+  await navigate(page, 'Network');
+  await expect(page.getByLabel('Network view', { exact: true })).toHaveAttribute('data-ready', 'true');
+  await expect(page.getByLabel('Network view', { exact: true })).toHaveAccessibleDescription(/Grid buses/);
+});

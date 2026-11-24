@@ -2,6 +2,7 @@ let context: CanvasRenderingContext2D | null;
 
 /** `value` as `#rrggbb`, or as `#rrggbbaa` when `alpha` asks and it is translucent; `null` for anything but a CSS color. */
 export function colorHex(value: string, alpha = false): string | null {
+  if (/^#[0-9a-f]{6}$/i.test(value)) return value.toLowerCase();
   if (!CSS.supports('color', value)) return null;
   context ??= document.createElement('canvas').getContext('2d', { willReadFrequently: true });
   if (!context) return null;

@@ -13,6 +13,9 @@ const bool = (category: Category, group: string, label: string, value: boolean) 
 const num = (category: Category, group: string, label: string, value: number, min: number, max: number, step = 1, unit = '') =>
   ({ category, group, label, kind: 'number' as const, min, max, step, unit,
     schema: (step === 1 ? z.number().int() : z.number()).min(min).max(max).default(value) });
+const length = (group: string, label: string, value: number, min: number, max: number) =>
+  ({ category: 'network' as const, group, label, kind: 'length' as const, min, max,
+    schema: z.union([z.number().min(min).max(max), z.object({ units: min > 0 ? z.number().positive() : z.number().nonnegative() })]).default(value) });
 /** A choice among `options`, each shown by its label in `labels`, else by its own name, and under its heading in `groups`. */
 const choice = <const T extends readonly [string, ...string[]]>(category: Category, group: string, label: string, options: T, value: T[number],
   labels: Partial<Record<T[number], string>> = {}, groups: Partial<Record<T[number], string>> = {}) =>
@@ -76,20 +79,23 @@ export const preferenceFields = {
   geographyUrl: only(url('network', 'Layers', 'GeoJSON URL'), 'geography', ['custom']),
   networkOcean: only(bool('network', 'Layers', 'Ocean', true), 'geography', [...mapped, 'custom']),
   networkMinRadius: num('network', 'Geometry', 'Minimum bus radius', 1, 0, 10, .5, 'px'),
-  dashPeriod: num('network', 'Geometry', 'Dash length', 12, 1, 64, 1, 'px'),
+  edgeHalo: length('Geometry', 'Branch crossing halo', 0, 0, 32),
+  lineHalo: length('Geometry', 'Line crossing halo', 0, 0, 32),
+  blockCorner: length('Geometry', 'Block corner radius', 6, 0, 32),
+  dashPeriod: length('Geometry', 'Dash length', 12, 1, 64),
   // Circuits between the same two buses run side by side and come together at each bus as chosen. A gap a little wider than the
   // widest stroke keeps each circuit its own line, and nine of them within 30 px.
   parallelBranches: choice('network', 'Geometry', 'Parallel branches', ['fan', 'squeeze', 'straight', 'overlap'], 'fan', {
     fan: 'Fan in', squeeze: 'Squeeze', straight: 'Straight', overlap: 'Overlapped',
   }),
-  parallelGap: only(num('network', 'Geometry', 'Parallel branch gap', 2, 0, 12, .5, 'px'), 'parallelBranches', ['fan', 'squeeze', 'straight']),
+  parallelGap: only(length('Geometry', 'Parallel branch gap', 2, 0, 12), 'parallelBranches', ['fan', 'squeeze', 'straight']),
   // Comets along the edges a flow is mapped for, each a head and a fading tail.
-  flowSpacing: num('network', 'Flow', 'Comet spacing', 64, 8, 400, 1, 'px'),
-  flowLength: num('network', 'Flow', 'Comet length', 24, 2, 200, 1, 'px'),
-  flowWidth: num('network', 'Flow', 'Comet width', 4, 1, 16, .5, 'px'),
+  flowSpacing: length('Flow', 'Comet spacing', 64, 8, 400),
+  flowLength: length('Flow', 'Comet length', 24, 2, 200),
+  flowWidth: length('Flow', 'Comet width', 4, 1, 16),
   networkFont: font('network'),
   networkFontSize: num('network', 'Labels', 'Text size', 12, 6, 32, 1, 'px'),
-  networkLabelHalo: num('network', 'Labels', 'Label halo', 2, 0, 8, .5, 'px'),
+  networkLabelHalo: length('Labels', 'Label halo', 2, 0, 8),
   networkBackground: color('network', 'Colors', 'Background'),
   networkTextColor: color('network', 'Colors', 'Labels'),
   networkGridColor: color('network', 'Colors', 'Grid'),

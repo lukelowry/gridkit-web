@@ -109,3 +109,18 @@ it('centers a deviation on no change, whatever the run recorded', () => {
   // A deviation waits for its output's samples, and needs nothing else installed.
   expect(simulationOption({ colormap: 'rdbu', value: '$simulation.Vm~change' }, new Set(['Va']), target, '#888888')).toBe('#888888');
 });
+
+it('binds compound marker and label leaves while preserving literal match keys and category names', () => {
+  const target = { collection: 'buses' } as const;
+  const style = [{ at: 0.5, marker: 'rectangle', size: { units: '$simulation.Vm' },
+    visible: { match: '$class', cases: [['$simulation.Va', true]], otherwise: false } }];
+  const cold = simulationOption(style, false, target, 0, 'markers');
+  expect(cold).toEqual([{ ...style[0], size: { units: 0 } }]);
+  const hot = simulationOption(style, new Set(['Vm']), target, 0, 'markers');
+  expect(hot).toMatchObject([{ at: 0.5, size: { units: { fallback: [{ field: 'Vm', from: ['simulation', 'Bus'] }, 0] } } }]);
+  expect(simulationOption({ text: '$name', offset: [2, '$simulation.Vm'] }, false, target, '', 'label'))
+    .toEqual({ text: '$name', offset: [2, 0] });
+  const map = { kind: 'categorical', colors: ['#ff0000'], values: ['$simulation.Va'] };
+  const colored = simulationOption({ colormap: map, value: '$simulation.Vm' }, true, target, null);
+  expect(colored).toMatchObject({ fallback: [{ colormap: map, value: { from: ['simulation', 'Bus'] } }, null] });
+});

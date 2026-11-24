@@ -71,11 +71,13 @@ export function networkScene({ document, preferences, palette, mappings, geograp
     const available = simulation && new Set(sampled.filter(field => field.collection === mark.target.collection &&
       (!mark.target.class || field.class === mark.target.class)).map(field => field.field));
     const options: Record<string, unknown> = Object.fromEntries(Object.entries(mark.options).map(([property, value]) =>
-      [property, simulationOption(value, available, mark.target, fallback[property] ?? 0)]));
+      [property, simulationOption(value, available, mark.target, fallback[property] ?? 0, property)]));
     const only = (rows: Expr) => (options.visible === undefined ? rows : rows.and(options.visible as ExprInput)).toJSON();
     // Bus classes share one table; a class's mark shows only its rows.
     if (table === 'Bus' && mark.target.class) options.visible = only(field('class').is(mark.target.class));
-    const base = { name: mark.id, ...options, ...structure, pick: true, select: true };
+    const palette = record(record(mark.options.color)?.colormap);
+    const categoryLegend = palette?.kind === 'categorical' && options.legend === undefined ? { legend: { title: mark.target.class ?? mark.target.collection } } : {};
+    const base = { name: mark.id, ...categoryLegend, ...options, ...structure, pick: true, select: true };
     // While results play, a branch out of service draws dashed and muted in the same mark, so its hover and selection stay.
     // In service it keeps no color of its own, so it blends its ends' colors as it does without results.
     if (simulation && table === 'Branch' && mark.kind === 'edges') {
@@ -90,7 +92,7 @@ export function networkScene({ document, preferences, palette, mappings, geograp
   const missing = legible([String(resolved.theme.missing)], grounds, floor)[0]!;
   const scene: Scene = {
     space: earthSpace(resolved.space) ? { earth: { projection: globe ? 'globe' : 'mercator', grid: v.networkGrid ? 'lines' : 'off', atmosphere: v.networkAtmosphere } }
-      : { plane: { grid: v.networkGrid ? { lines: { step: 10 } } : 'off' } },
+      : { plane: { ...typeof resolved.space === 'object' && 'plane' in resolved.space && resolved.space.plane, grid: v.networkGrid ? { lines: { step: 10 } } : 'off' } },
     marks, theme: { ...resolved.theme, ...ocean && { earth: { ...resolved.theme.earth, ground: ocean }, area: { ...resolved.theme.area, ...land && { color: land } } },
       missing, contrast: floor },
     // A network lays out only the buses its case does not place.
@@ -106,7 +108,9 @@ const drawn = new WeakMap<NetworkScene, ReadonlySet<string>>();
 export function tablesOf(input: NetworkScene): ReadonlySet<string> {
   let tables = drawn.get(input);
   if (!tables) drawn.set(input, tables = new Set(input.scene.marks?.flatMap(mark => {
-    const [data, table] = ('vertices' in mark ? mark.vertices : 'edges' in mark ? mark.edges : 'lines' in mark ? mark.lines : mark.areas) as [string, string];
+    const input = 'vertices' in mark ? mark.vertices : 'edges' in mark ? mark.edges : 'lines' in mark ? mark.lines : mark.areas;
+    if (typeof input === 'string') return [];
+    const [data, table] = 'toJSON' in input ? input.toJSON() : input;
     return data === dataset ? [table] : [];
   })));
   return tables;
