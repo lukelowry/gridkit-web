@@ -1,4 +1,4 @@
-import { colormaps, type Colormap, type ColormapKind } from 'latkit';
+import { colormaps, type Colormap, type ColormapKind, type CustomColormap } from 'latkit';
 import { colorHex, legible } from './color.js';
 
 /** The ground and the contrast a view keeps its colormaps at: a preview has to show the colors the view draws. */
@@ -32,10 +32,13 @@ export function palettes(deviating: boolean) {
 
 /** What a mark's color means while results play. */
 export interface ColorScale { readonly name: string; readonly map: Colormap; readonly domain: [number, number] | null; readonly signed: boolean; readonly fit: ColorFit }
+export function categoryNames(map: CustomColormap): string[] {
+  return map.colors.map((_, index) => map.categories?.[index] ?? String(map.values?.[index] ?? index));
+}
 /** The values a scale names along its ramp, at their places: a diverging map's middle too. */
 export function scaleTicks(map: Colormap, domain: [number, number] | null, signed: boolean) {
   if (typeof map === 'object' && map.kind === 'categorical') {
-    const names = map.categories ?? map.values?.map(String) ?? map.colors.map((_, i) => String(i));
+    const names = categoryNames(map);
     return names.map((text, i) => ({ at: (i + 0.5) / names.length, text }));
   }
   if (!domain) return [{ at: 0, text: 'Least' }, { at: 1, text: 'Most' }];

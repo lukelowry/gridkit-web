@@ -3,7 +3,10 @@ import { field, when } from 'latkit';
 import { CaseDocument, parseCase } from '@gridkit/library';
 import { createPreferences } from '../preferences/state.svelte.js';
 import fixture from '../../../library/test/small.case.json';
-import { fieldsIn, mergeTheme, recognize } from './views.js';
+import { optionReads } from './expressions.js';
+import { mergeTheme, recognize } from './views.js';
+
+const fieldsIn = (value: unknown, option = '') => [...optionReads(option, value).fields];
 
 it('reads native local fields without treating joined fields, colors, or literal text as dependencies', () => {
   const value = when(field('name').is('$literal')).then(field('params.kv'))
@@ -55,9 +58,9 @@ it('drops obsolete views on import and export while preserving Network options a
 });
 
 it('collects only expression operands in match, palettes, symbols and WGSL', () => {
-  expect(fieldsIn({
-    marker: { symbol: { paths: ['$literal'], index: { match: '$class', cases: [['$literal', '$index']], otherwise: 0 } } },
-    color: { colormap: { kind: 'categorical', values: ['$ignored'] }, value: '$kv' },
-    custom: { wgsl: { source: '$ignored', inputs: ['$power'] } },
-  })).toEqual(['class', 'index', 'kv', 'power']);
+  expect(fieldsIn({ symbol: { paths: ['$literal'], index: { match: '$class', cases: [['$literal', '$index']], otherwise: 0 } } }, 'marker')).toEqual(['class', 'index']);
+  expect(fieldsIn({ colormap: { kind: 'categorical', values: ['$ignored'] }, value: '$kv' }, 'color')).toEqual(['kv']);
+  expect(fieldsIn({ wgsl: { source: '$ignored', inputs: ['$power'] } }, 'marker')).toEqual(['power']);
+  expect(fieldsIn({ source: '$literal', inputs: ['$power'] }, 'shade')).toEqual(['power']);
+  expect(fieldsIn({ text: '$name', unit: '$USD', offset: [0, '$dx'] }, 'label')).toEqual(['name', 'dx']);
 });

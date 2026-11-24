@@ -5,7 +5,7 @@ import { Data, load } from 'latkit';
 import fixture from '../../../../library/IEEE39.case.json';
 import { CaseDocument, parseCase } from '@gridkit/library';
 import { affine, fieldOf, referenceField } from '../domain/measure.js';
-import { mappedOutputs, matchesField, sampledExpression, sampledName, simulationDataset, simulationExpression, simulationFields, simulationOption } from './sampled.js';
+import { mappedOutputs, matchesField, sampledExpression, sampledName, simulationDataset, simulationFields, simulationOption } from './sampled.js';
 
 beforeAll(async () => { await load({ wasm: await WebAssembly.compile(new Uint8Array(await readFile(new URL(import.meta.resolve('latkit/wasm'))))) }); });
 
@@ -25,9 +25,9 @@ it('offers every output a run can record before any run, and a safe fallback wit
   // Every view shares the immutable document's one lookup and its answers.
   expect(simulationFields(document)).toBe(fields);
   expect(fields({ collection: 'buses' })).toBe(fields({ collection: 'buses' }));
-  expect(simulationExpression('$simulation.Vm', false)).toBeNull();
+  expect(simulationOption('$simulation.Vm', false, { collection: 'buses' }, null)).toBeNull();
   const mapping = {scale:[0,10], domain:[0.9,1.1], value:'$simulation.Vm'};
-  const rendered = JSON.stringify(simulationExpression(mapping, true));
+  const rendered = JSON.stringify(simulationOption(mapping, true, { collection: 'buses' }, null));
   expect(rendered).toContain('simulation');
   expect(rendered).toContain('Bus');
   expect(rendered).not.toContain('step');
@@ -56,10 +56,10 @@ it('matches a channel to every measure of its output, and names a sampled field 
   expect(sampledName('simulation.Vm~change')).toBe('Vm~change');
   expect(sampledName('params.kv')).toBeNull();
   // A deviation reads the output and the reference the recording keeps beside it, never a field of its own.
-  const change = JSON.stringify(simulationExpression('$simulation.Vm~change', true));
+  const change = JSON.stringify(simulationOption('$simulation.Vm~change', true, { collection: 'buses' }, 0));
   expect(change).toContain(`"${referenceField('Vm')}"`);
   expect(change).not.toContain('"Vm~change"');
-  expect(JSON.stringify(simulationExpression({ field: 'simulation.Vm~change', step: true }, true))).toContain('step');
+  expect(JSON.stringify(simulationOption({ field: 'simulation.Vm~change', step: true }, true, { collection: 'buses' }, 0))).toContain('step');
 });
 
 it('reads every measure of an output as the plot reads it, from what the recording holds', () => {

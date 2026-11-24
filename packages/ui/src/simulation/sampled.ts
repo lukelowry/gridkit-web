@@ -1,7 +1,8 @@
 import { untrack } from 'svelte';
 import { field, type Expr, type ExprInput } from 'latkit';
 import { record, targetKey, type CaseDocument, type ElementTarget, type FieldInfo, type SavedViews } from '@gridkit/library';
-import { defaultMarks, mapFieldReads, fieldsIn } from '../domain/views.js';
+import { defaultMarks, type MarkDefinition } from '../domain/views.js';
+import { mapFieldReads, mapOptionExpressions, optionReads } from '../domain/expressions.js';
 import { resolveMappings } from '../mappings/resolve.js';
 import { outputLabel } from './channels.js';
 import { recordableOutputs, type Channel, type WantedOutput } from '@gridkit/library/gridkit';
@@ -60,6 +61,15 @@ export function simulationFields(document: CaseDocument): FieldLookup {
   return lookup;
 }
 
+export function sampledFields(mark: MarkDefinition): SampledField[] {
+  const names = new Set<string>();
+  for (const [key, value] of Object.entries(mark.options)) for (const id of optionReads(key, value).fields) {
+    const name = sampledName(id);
+    if (name) names.add(name);
+  }
+  return [...names].map(field => ({ ...mark.target, field }));
+}
+
 /**
  * The outputs the network's mappings read, of the elements each reads them of: a run records them beside what it always does, so
  * a mapping of any output its elements' models have draws once a run has it.
@@ -67,8 +77,8 @@ export function simulationFields(document: CaseDocument): FieldLookup {
 export function mappedOutputs(document: CaseDocument, userDefaults: SavedViews, caseOverrides: SavedViews): WantedOutput[] {
   const { marks } = resolveMappings(defaultMarks(document.targets), userDefaults.network, caseOverrides.network, simulationFields(document), true);
   const wanted = new Map<string, WantedOutput>();
-  for (const mark of marks) for (const name of fieldsIn(mark.options).flatMap(id => sampledName(id) ?? [])) {
-    const want: WantedOutput = { ...mark.target, output: measureOf(name).output };
+  for (const mark of marks) for (const { field, ...target } of sampledFields(mark)) {
+    const want: WantedOutput = { ...target, output: measureOf(field).output };
     wanted.set(JSON.stringify([want.collection, want.class ?? null, want.output]), want);
   }
   return [...wanted.values()];
@@ -86,43 +96,31 @@ export function sampledExpression(name: string, target: ElementTarget): Expr {
   return basis === 'change' ? change : change.mul(100).div(from.abs());
 }
 
-/** Translate the UI's field names to what the recording holds. The case's static data never changes. */
-export function simulationExpression(value: unknown, available: boolean, target: ElementTarget = { collection: 'buses' }): unknown {
-  return mapFieldReads(value, (name, original) => {
-    const field = sampledName(name);
-    if (!field) return original;
-    if (!available) return null;
-    const read = sampledExpression(field, target);
-    return (record(original)?.step === true ? read.step() : read).toJSON();
-  });
-}
-
 /**
  * A sampled option, or `fallback` until its samples are installed and wherever they are missing, so a missing radius never
  * hides a good color or elevation. A sampled scale or colormap without a domain holds still as time moves: a deviation across its
  * symmetric band, so no change stays the middle of the map, anything else over every recorded value.
  */
 export function simulationOption(value: unknown, available: boolean | ReadonlySet<string>, target: ElementTarget, fallback: ExprInput, property?: string): unknown {
-  if (property === 'legend') return value;
-  const signals = fieldsIn(value).flatMap(name => sampledName(name) ?? []);
-  if (!signals.length) return value;
-  const apply = (child: unknown, key: string, missing: ExprInput = 0) => simulationOption(child, available, target, missing, key);
-  const node = record(value);
-  if (Array.isArray(value) && ['markers', 'offset', 'position', 'size', 'blend', 'slices', 'inputs'].includes(property ?? ''))
-    return value.map(child => apply(child, property === 'markers' ? 'strokeMarker' : 'component'));
-  if (node && (property === 'strokeMarker' || property === 'marker' || property === 'label' && 'text' in node ||
-      ['symbol', 'icon', 'gauge', 'pie', 'wgsl'].includes(property ?? '') || 'units' in node)) {
-    return Object.fromEntries(Object.entries(node).map(([key, child]) => {
-      if (['paths', 'images', 'colors', 'source', 'font'].includes(key)) return [key, child];
-      const missing = key === 'visible' ? false : key === 'text' ? '' : key === 'color' ? null : 0;
-      return [key, apply(child, key, missing)];
-    }));
-  }
-  // The catalog may advertise an output before its samples arrive; arrival changes this option's expression. Every measure of an
-  // output reads what the recording holds of it.
-  if (!available || (typeof available !== 'boolean' && signals.some(name => !available.has(measureOf(name).output)))) return fallback;
-  const measure = measureOf(signals[0]!);
-  const band = measure.basis === 'value' ? null : defaultBand(measure);
-  const mapped = node && ('colormap' in node || 'scale' in node) && record(node.colormap)?.kind !== 'categorical' && node.domain === undefined ? { ...node, domain: band ? [-band, band] : 'all' } : value;
-  return { fallback: [simulationExpression(mapped, true, target), fallback] };
+  return mapOptionExpressions(value, property ?? '', (expr, slot, nested) => {
+    let first: string | undefined, missing = false;
+    let mapped = mapFieldReads(expr, (id, original) => {
+      const name = sampledName(id);
+      if (!name || record(original)?.of != null) return original;
+      first ??= name;
+      if (!available || available !== true && !available.has(measureOf(name).output)) missing = true;
+      if (missing) return original;
+      const read = sampledExpression(name, target);
+      return (record(original)?.step === true ? read.step() : read).toJSON();
+    });
+    if (!first) return expr;
+    const base = !nested ? fallback : slot === 'visible' ? false : slot === 'text' ? '' : slot === 'color' ? null : 0;
+    if (missing) return base;
+    const node = record(mapped);
+    if (node && ('scale' in node || 'colormap' in node) && record(node.colormap)?.kind !== 'categorical' && node.domain === undefined) {
+      const measure = measureOf(first), band = measure.basis === 'value' ? null : defaultBand(measure);
+      mapped = { ...node, domain: band ? [-band, band] : 'all' };
+    }
+    return { fallback: [mapped, base] };
+  });
 }

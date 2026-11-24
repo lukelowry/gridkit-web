@@ -30,24 +30,28 @@ try {
   const directory = new URL('../../../output/playwright/', import.meta.url);
   await mkdir(directory, { recursive: true });
   const workloads = [
-    [100_000, 256, 'plain'], [1_000_000, 256, 'plain'], [1_000_000, 32, 'plain'],
+    [100_000, 256, 'plain'], [1_000_000, 256, 'plain'],
+    [1_000_000, 32, 'plain', 'vertices'], [1_000_000, 32, 'plain', 'edges'], [1_000_000, 32, 'plain', 'sampled'],
     [1_000_000, 256, 'markers'], [1_000_000, 256, 'halos'], [1_000_000, 256, 'labels'],
   ] as const;
-  for (const [size, budget, detail] of workloads) {
+  const budgetOnly = process.argv.includes('--budget-only');
+  const report = budgetOnly ? 'latkit-budget.json' : 'latkit-performance.json';
+  for (const [size, budget, detail, stage = 'playback' as const] of workloads) {
+    if (budgetOnly && budget !== 32) continue;
     await page.goto(address);
     try {
-      const measured = await page.evaluate(async ({ size, budget, detail }) => {
+      const measured = await page.evaluate(async ({ size, budget, detail, stage }) => {
         const url = '/tests/performance.ts';
         const { measureNetwork } = await import(url) as typeof import('./performance.js');
-        return measureNetwork(size, budget, detail);
-      }, { size, budget, detail });
+        return measureNetwork(size, budget, detail, stage);
+      }, { size, budget, detail, stage });
       scenarios.push(measured);
     } catch (error) {
-      scenarios.push({ size, budgetMiB: budget, detail, error: error instanceof Error ? error.message : String(error) });
+      scenarios.push({ size, budgetMiB: budget, detail, stage, error: error instanceof Error ? error.message : String(error) });
     }
     console.log(JSON.stringify(scenarios.at(-1)));
-    await writeFile(new URL('latkit-performance.json', directory), JSON.stringify({ environment, realCaseOpenMs, scenarios, failures }, null, 2));
+    await writeFile(new URL(report, directory), JSON.stringify({ environment, realCaseOpenMs, scenarios, failures }, null, 2));
   }
-  if (failures.length || scenarios.some(s => 'error' in s)) throw new Error('One or more browser scenarios failed. See latkit-performance.json.');
-  console.log(`ACTIVSg10k open: ${realCaseOpenMs} ms; report: output/playwright/latkit-performance.json`);
+  if (failures.length || scenarios.some(s => 'error' in s)) throw new Error(`One or more browser scenarios failed. See ${report}.`);
+  console.log(`ACTIVSg10k open: ${realCaseOpenMs} ms; report: output/playwright/${report}`);
 } finally { await browser.close(); }

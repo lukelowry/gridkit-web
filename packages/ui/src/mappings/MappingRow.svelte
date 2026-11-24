@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { parseInput } from './expression-input.js';
   import { watchNotice } from '../ui/toasts.svelte.js';
   import { field, type CustomColormap, type Colormap } from 'latkit';
   import type { FieldInfo } from '@gridkit/library';
@@ -136,8 +137,8 @@
   function setFormula(input: string) {
     formula = input;
     let node: unknown;
-    try { node = JSON.parse(input); }
-    catch { ondraft({ error: 'Enter a latkit expression as JSON.' }); return; }
+    try { node = parseInput(input, 'formula'); }
+    catch (cause) { ondraft({ texts: { formula: input }, error: errorMessage(cause, 'Check this formula.') }); return; }
     apply({ kind: 'formula', node });
   }
 </script>
@@ -145,7 +146,7 @@
 <div class="property-row" role="group" aria-label={`${label} mapping row`}>
   <span class="property-label">{label}</span>
   <div class="property-control">
-    <Popover bind:this={popover} label={`${label} mapping`} width={300} align="end" onopen={() => { open = true; writing = false; if (own.kind === 'formula') formula = JSON.stringify(value, null, 2); }} onclose={() => { open = false; }}>
+    <Popover bind:this={popover} label={`${label} mapping`} width={300} align="end" onopen={() => { open = true; writing = texts.formula !== undefined; if (writing || own.kind === 'formula') formula = texts.formula ?? JSON.stringify(value, null, 2); }} onclose={() => { open = false; }}>
       {#snippet trigger(popup)}
         <button type="button" class="c-select" aria-label={`${label} mapping`} title={own.kind === 'inherit' ? `Default: ${summary(base)}` : undefined} data-inherited={own.kind === 'inherit' || undefined}
           popovertarget={popup} aria-haspopup="dialog" aria-expanded={open} aria-controls={popup}

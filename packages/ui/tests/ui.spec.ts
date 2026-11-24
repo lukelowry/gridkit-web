@@ -584,7 +584,11 @@ test('applies native category colors, branch symbols and drawing coordinates', a
   await page.getByLabel('Blend Start').press('Tab');
   await page.getByRole('button', { name: 'Add branch marker', exact: true }).click();
   await page.getByLabel('Marker 1 Size units').selectOption('units');
+  const apply = page.getByRole('button', { name: 'Apply', exact: true });
+  await page.getByLabel('Marker 1 Position').fill('1.1');
+  await expect(apply).toBeDisabled();
   await page.getByLabel('Marker 1 Position').fill('0.4');
+  await expect(apply).toBeEnabled();
   await page.getByLabel('Marker 1 Position').press('Tab');
   await page.getByRole('button', { name: 'Apply', exact: true }).click();
   const mappings = await page.evaluate(() => JSON.parse(localStorage.getItem('gridkit.preferences')!).mappings.network);
@@ -598,4 +602,27 @@ test('applies native category colors, branch symbols and drawing coordinates', a
   await navigate(page, 'Network');
   await expect(page.getByLabel('Network view', { exact: true })).toHaveAttribute('data-ready', 'true');
   await expect(page.getByLabel('Network view', { exact: true })).toHaveAccessibleDescription(/Grid buses/);
+});
+
+test('edits an ordinal palette by color index and preserves its implicit values', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('gridkit.preferences', JSON.stringify({ mappings: { network: { marks: [
+    { id: 'buses', target: { collection: 'buses' }, kind: 'vertices', options: { color: { value: '$params.kv',
+      colormap: { kind: 'categorical', colors: ['#ff0000', '#0000ff'] } } } },
+  ] } } })));
+  await page.reload();
+  await openCase(page);
+  await openMappings(page);
+  await page.getByRole('radio', { name: 'Browser defaults', exact: true }).check();
+  await page.getByRole('button', { name: 'Color mapping', exact: true }).click();
+  await expect(page.getByLabel('Category 2 value')).toHaveValue('1');
+  await expect(page.getByLabel('Category 2 value')).not.toBeEditable();
+  await page.getByRole('button', { name: 'Add category' }).click();
+  await expect(page.getByLabel('Category 1 color')).toHaveValue('#ff0000');
+  await page.getByLabel('Category 3 label').fill('Spare');
+  await page.getByLabel('Category 3 label').press('Tab');
+  await page.getByRole('button', { name: 'Remove category 1' }).click();
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Apply', exact: true }).click();
+  const palette = await page.evaluate(() => JSON.parse(localStorage.getItem('gridkit.preferences')!).mappings.network.marks[0].options.color.colormap);
+  expect(palette).toEqual({ kind: 'categorical', colors: ['#0000ff', '#0072b2'], categories: ['1', 'Spare'] });
 });

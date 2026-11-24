@@ -66,17 +66,23 @@
   const rowValue = (options: Record<string, unknown>, row: Row) => options[row.option];
   const draftKey = (mark: MarkDefinition, id: string) => JSON.stringify([scope, mark.id, id]);
   function setDraft(key: string, draft: MappingDraft) {
-    drafts[key] = draft;
+    if (draft.error || draft.texts) drafts[key] = draft;
+    else delete drafts[key];
     oninvalid(Object.values(drafts).some(draft => !!draft.error));
   }
-  function setOption(mark: MarkDefinition, key: keyof MappingOptions, value: unknown) {
+  function setOption<P extends keyof MappingOptions>(mark: MarkDefinition, key: P, value: Required<MappingOptions>[P] | undefined) {
     const target = { mark: mark.id };
-    onchange(tx => value === undefined ? tx.reset(target, key) : tx.map(target, key, value as Exclude<MappingOptions[typeof key], undefined>));
+    onchange(tx => value === undefined ? tx.reset(target, key) : tx.map(target, key, value));
+  }
+  function edit(mark: MarkDefinition) {
+    const set = <P extends keyof MappingOptions>(key: P, next: Required<MappingOptions>[P] | undefined) => setOption(mark, key, next);
+    return { ...mark, options: { ...mark.options, ...ownOptions(mark) }, set };
   }
   function map(mark: MarkDefinition, row: Row, next: unknown) {
     const issue = numericIssue(next, numericConstraint(row.option), field => fieldMinimum(document, mark.target, field));
     if (issue) throw new Error(issue);
-    setOption(mark, row.option, next);
+    // The formula editor accepts native option JSON at this boundary.
+    setOption(mark, row.option, next as MappingOptions[typeof row.option]);
   }
   /** An option of a few choices, drawn as the choices, or that is simply on or off. */
   type Choice = { option: 'marker' | 'visible' | 'position' | 'route' | 'dash'; label: string; icons?: readonly { value: string; label: string; icon: IconName }[] };
@@ -164,7 +170,8 @@
         </div>
       </div>
     {/each}
-    <MarkDetails kind={mark.kind} labelSize={resolved.theme.text?.size ?? 12} options={{ ...base, ...own }} {fields} onchange={(key, next) => setOption(mark, key, next)} />
+    <MarkDetails editor={edit(mark)}
+      labelSize={resolved.theme.text?.size ?? 12} {fields} onlabel={label => setOption(mark, 'label', label)} onissue={(id, message) => setDraft(id, message ? { error: message } : {})} />
     {#if other.length}<p class="property-empty">Other saved mappings are preserved: {other.join(', ')}.</p>{/if}
   </details>
 {/each}

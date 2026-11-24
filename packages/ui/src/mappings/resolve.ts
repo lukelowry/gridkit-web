@@ -1,6 +1,7 @@
 import type { Scene, Theme } from 'latkit';
 import { record, type ElementTarget, type FieldInfo } from '@gridkit/library';
-import { optionIssue, expressionIssue, fieldsIn, mergeTheme, readMark, type MarkDefinition, type Diagnostic } from '../domain/views.js';
+import { optionIssue, mergeTheme, readMark, type MarkDefinition, type Diagnostic } from '../domain/views.js';
+import { optionReads } from '../domain/expressions.js';
 import { numericConstraint, numericIssue } from './numeric.js';
 import { measureOf } from '../domain/measure.js';
 
@@ -43,12 +44,11 @@ export function resolveMappings(defaults: readonly MarkDefinition[], user: unkno
       const options: Record<string, unknown> = { ...base?.options };
       const available = new Map(fields(mark.target).map(field => [field.id, field]));
       for (const [key, value] of Object.entries(mark.options)) {
-        const issue = optionIssue(key) ?? expressionIssue(value) ?? numericIssue(value, numericConstraint(key));
+        const read = optionReads(key, value);
+        const issue = optionIssue(key) ?? read.issue ?? numericIssue(value, numericConstraint(key));
         if (issue) { report(`${at}.options.${key}`, issue); continue; }
-        const read = fieldsIn({ [key]: value });
-        if (!simulation && read.some(id => id.startsWith('simulation.')) &&
-            !['markers', 'marker', 'label', 'blend', 'position', 'size'].includes(key) && record(value)?.units === undefined) continue;
-        const missing = read.filter(id => !available.has(measureOf(id).output));
+        if (!simulation && read.sampledRoot) continue;
+        const missing = [...read.fields].filter(id => !available.has(measureOf(id).output));
         if (missing.length) { report(`${at}.options.${key}`, `Unknown field: ${missing.join(', ')}.`, 'missing-field'); continue; }
         options[key] = value;
       }

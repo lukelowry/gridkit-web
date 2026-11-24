@@ -1,11 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { View, symbol, type ExprInput, type Marker, type Scene } from 'latkit';
+  import { View, symbol, type Marker, type Scene } from 'latkit';
   import { latkit } from '../ui/latkit.js';
   import LengthInput from '../ui/LengthInput.svelte';
 
+  import ExpressionInput from './ExpressionInput.svelte';
+  import type { InputIssue } from './expression-input.js';
+
   type SymbolOptions = Extract<Marker, { symbol: unknown }>['symbol'];
-  let { spec, name, onchange }: { spec: SymbolOptions; name: string; onchange: (spec: SymbolOptions) => void } = $props();
+  let { spec, name, onchange, onissue }: { spec: SymbolOptions; name: string; onissue: InputIssue; onchange: (spec: SymbolOptions) => void } = $props();
   let canvas: HTMLCanvasElement;
   let view = $state.raw<View>();
   let fault = $state('');
@@ -40,14 +43,6 @@
     view.scene = preview;
     void view.fit().catch(() => {});
   });
-  function changeIndex(input: HTMLInputElement) {
-    const text = input.value.trim(), { index: _, ...base } = spec;
-    try {
-      const index: ExprInput | undefined = !text ? undefined : text.startsWith('$') ? text : JSON.parse(text);
-      onchange(index === undefined ? base : { ...base, index });
-      input.setCustomValidity('');
-    } catch { input.setCustomValidity('Enter an index, field, or expression.'); input.reportValidity(); }
-  }
 </script>
 
 <canvas bind:this={canvas} aria-label={name + ' preview'}></canvas>
@@ -57,8 +52,8 @@
     const paths = currentTarget.value.split('\n').map(path => path.trim()).filter(Boolean);
     if (paths.length) onchange({ ...spec, paths }); else currentTarget.value = spec.paths.join('\n');
   }}></textarea></label>
-<label>Path index <input aria-label={name + ' path index'} value={typeof spec.index === 'string' ? spec.index : JSON.stringify(spec.index) ?? ''} placeholder="0 or field"
-  oninput={({ currentTarget }) => currentTarget.setCustomValidity('')} onchange={({ currentTarget }) => changeIndex(currentTarget)} /></label>
+<label>Path index <ExpressionInput label={name + ' path index'} value={spec.index} kind="index" placeholder="0 or field" {onissue}
+  onchange={index => { const { index: _, ...base } = spec; onchange(index === undefined ? base : { ...base, index }); }} /></label>
 <label>Outline <input aria-label={name + ' outline'} type="checkbox" checked={spec.stroke != null}
   onchange={({ currentTarget }) => onchange({ ...spec, stroke: currentTarget.checked ? 1 : null })} /></label>
 {#if spec.stroke != null}

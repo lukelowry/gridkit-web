@@ -7,17 +7,15 @@
   import { geographyOf, type GeographyLayer } from '../preferences/definitions.js';
   import type { PreferencesState } from '../preferences/state.svelte.js';
   import { earthSpace, networkSpace, paletteTokens } from '../mappings/defaults.js';
-  import { fieldsIn } from '../domain/views.js';
-  import { sampledName, simulationFields } from '../simulation/sampled.js';
+  import { categoryNames, type ColorScale } from '../ui/ramps.js';
+  import { sampledFields, simulationFields } from '../simulation/sampled.js';
   import type { RunSession } from '../simulation/run.svelte.js';
   import { measureOf } from '../domain/measure.js';
   import { colorScaleOf } from '../mappings/encoding.js';
-  import type { ColorScale } from '../ui/ramps.js';
   import { sameReference, entryOf } from '../domain/entries.js';
   import { themeColors } from '../ui/color.js';
   import { reload } from '../ui/errors.js';
   import type { MenuItem } from '../ui/menu.js';
-  import { record } from '@gridkit/library';
   import { dataset, refOf, rowsOf, tables } from './data.js';
   import { networkScene, spaceOf, tablesOf, themeOf } from './scene.js';
   import type { ExportRequest } from './export.js';
@@ -91,10 +89,10 @@
     return [verb + ': ' + entry.class + ' ' + entry.label + (entry.name ? ' (' + entry.name + ')' : '')];
   }).join('. '));
   const categoryLabels = $derived(scene.entries.flatMap(entry => {
-    const mark = entry?.mark, map = record(record(mark?.options.color)?.colormap);
-    if (map?.kind !== 'categorical' || mark?.options.legend === null) return [];
-    const names = map.categories ?? map.values;
-    return Array.isArray(names) ? [mark!.id + ': ' + names.join(', ')] : [];
+    const mark = entry?.mark, color = mark?.options.color;
+    const map = color && typeof color === 'object' && 'colormap' in color ? color.colormap : null;
+    if (!mark || mark.options.legend === null || !map || typeof map !== 'object' || map.kind !== 'categorical' || !Array.isArray(map.colors)) return [];
+    return [mark.id + ': ' + categoryNames(map).join(', ')];
   }).join('. '));
   const rows = $derived(tables(document));
   const extra = (): Source[] => [...geography.map(layer => layer.data), ...run?.sources ?? []];
@@ -163,9 +161,7 @@
     if (opened && simulationActive) return run!.playhead.attach(opened.view);
   });
   $effect(() => {
-    const fields = scene.entries.flatMap(entry => entry ? fieldsIn(entry.mark.options)
-      .flatMap(name => sampledName(name) ?? [])
-      .map(field => ({ ...entry.mark.target, field })) : []);
+    const fields = scene.entries.flatMap(entry => entry ? sampledFields(entry.mark) : []);
     if (run?.channels.length) untrack(() => run.sample(fields));
   });
 

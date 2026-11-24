@@ -44,58 +44,6 @@ export function json<T>(value: T): T {
   if (encoded === undefined) throw new Error('Mappings must be JSON.');
   return JSON.parse(encoded) as T;
 }
-const literals = new Set(['colormap', 'font', 'from', 'paths', 'images', 'colors', 'legend', 'source']);
-
-/** Visit every local read. Allocate a replacement branch only when the visitor changes a leaf. */
-export function mapFieldReads(value: unknown, visit: (name: string, original: unknown) => unknown): unknown {
-  function array(items: unknown[], transform: (item: unknown, index: number) => unknown): unknown[] {
-    let result: unknown[] | undefined;
-    items.forEach((item, i) => {
-      const next = transform(item, i);
-      if (next !== item) (result ??= items.slice())[i] = next;
-    });
-    return result ?? items;
-  }
-  function walk(node: unknown): unknown {
-    if (typeof node === 'string' && node.startsWith('$')) return visit(node.slice(1), node);
-    if (Array.isArray(node)) return array(node, walk);
-    const expr = record(node);
-    if (!expr) return node;
-    if (typeof expr.field === 'string') {
-      if (typeof expr.of === 'string') { visit(expr.of, node); return node; }
-      return expr.from == null ? visit(expr.field, node) : node;
-    }
-    let result: Record<string, unknown> | undefined;
-    for (const [key, child] of Object.entries(expr)) {
-      if (literals.has(key)) continue;
-      let next: unknown;
-      if ((key === 'is' || key === 'contains') && Array.isArray(child))
-        next = array(child, (item, i) => i === 0 ? walk(item) : item);
-      else if (key === 'cases' && 'match' in expr && Array.isArray(child))
-        next = array(child, pair => Array.isArray(pair) ? array(pair, (item, i) => i === 1 ? walk(item) : item) : pair);
-      else next = walk(child);
-      if (next !== child) (result ??= { ...expr })[key] = next;
-    }
-    return result ?? node;
-  }
-  return walk(value);
-}
-export function fieldsIn(value: unknown): readonly string[] {
-  const fields = new Set<string>();
-  mapFieldReads(value, (name, node) => { fields.add(name); return node; });
-  return [...fields];
-}
-/** Latkit reads through a reference or joins another dataset; those two forms cannot be combined. */
-export function expressionIssue(value: unknown): string | null {
-  const node = record(value);
-  if (node && typeof node.field === 'string' && node.field.startsWith('simulation.') && node.of != null)
-    return 'Map simulation fields on their own elements; simulation joins cannot also read through a reference.';
-  for (const child of Array.isArray(value) ? value : node ? Object.values(node) : []) {
-    const issue = expressionIssue(child);
-    if (issue) return issue;
-  }
-  return null;
-}
 function localField(value: unknown): string | null {
   if (typeof value === 'string' && value.startsWith('$')) return value.slice(1);
   const node = record(value);
@@ -160,7 +108,7 @@ export function mappingDraft(saved: SavedViews, defaults: () => readonly MarkDef
   }
   return {
     get value(): SavedViews { return value; },
-    map<K extends keyof MappingOptions>(target: MarkRef, option: K, next: Exclude<MappingOptions[K], undefined>) { update(target, option, next, false); },
+    map<K extends keyof MappingOptions>(target: MarkRef, option: K, next: Required<MappingOptions>[K]) { update(target, option, next, false); },
     reset(target: MarkRef, option: keyof MappingOptions) { update(target, option, undefined, true); },
     view(patch: Omit<ViewConfig, 'marks'>) {
       const data = json(patch);

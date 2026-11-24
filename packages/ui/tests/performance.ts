@@ -41,7 +41,7 @@ async function phase(gpu: Gpu, view: View, change: (frame: number) => void) {
 }
 
 /** Browser-only probe, loaded by performance.probe.ts through the development server. Never included in the app build. */
-export async function measureNetwork(size: number, budgetMiB: number, detail: 'plain' | 'markers' | 'halos' | 'labels' = 'plain') {
+export async function measureNetwork(size: number, budgetMiB: number, detail: 'plain' | 'markers' | 'halos' | 'labels' = 'plain', stage: 'vertices' | 'edges' | 'sampled' | 'playback' = 'playback') {
   const gpu = await Gpu.create();
   gpu.budget = { ...gpu.budget, bytes: Math.min(gpu.budget.bytes, budgetMiB * 1024 * 1024) };
   const data = new Data('benchmark'), samples = new Data('benchmark-results').axis('Time', 's');
@@ -56,29 +56,34 @@ export async function measureNetwork(size: number, budgetMiB: number, detail: 'p
       x: Float64Array.from({ length: size }, (_, i) => i % side),
       y: Float64Array.from({ length: size }, (_, i) => Math.floor(i / side)),
     });
-    data.replace('Branch', { count: size }, {
+    if (stage !== 'vertices') data.replace('Branch', { count: size }, {
       from: reference('Bus', Uint32Array.from({ length: size }, (_, i) => i % 20 === 1 ? i - 1 : i)),
       to: reference('Bus', Uint32Array.from({ length: size }, (_, i) => Math.min(size - 1, i % 20 === 1 ? i : i + 1))),
     });
     // A recording of every bus, as a run's results are: four frames a second apart, each bus a step further around its range.
-    const recorded = [0, 1, 2, 3];
-    samples.replace('Bus', { count: size }, {});
-    samples.append('Bus', recorded, { Vm: Float32Array.from({ length: size * recorded.length }, (_, k) => ((k % size) % 97 / 97 + Math.floor(k / size) / 3) % 1) });
+    const sampled = stage === 'sampled' || stage === 'playback';
+    if (sampled) {
+      const recorded = [0, 1, 2, 3];
+      samples.replace('Bus', { count: size }, {});
+      samples.append('Bus', recorded, { Vm: Float32Array.from({ length: size * recorded.length }, (_, k) => ((k % size) % 97 / 97 + Math.floor(k / size) / 3) % 1) });
+    }
     const voltage = field('Vm').from(['benchmark-results', 'Bus']), started = performance.now();
     // Branches under buses, as the network draws them, with the editor's controls: comets draw at its default frame rate.
     const sceneWith = (flow: number): Scene => ({
       space: 'plane', layout: 'none', ease: 0, theme: { base: 'light', ...detail === 'halos' && { edge: { halo: 1 } } }, controls: controlsOf(defaults, 'full'),
       marks: [
-        { edges: ['benchmark', 'Branch'], ends: ['from', 'to'], width: 0.7, ...detail === 'markers' && { markers: [{ marker: 'rectangle', at: 0.5, size: 4 }] }, ...flow ? { flow } : {} },
-        { vertices: ['benchmark', 'Bus'], position: ['$x', '$y'], ...detail === 'labels' && { label: { text: '$caption', place: 'right' } }, elevation: voltage.scale(0, 15).domain(0, 1),
-          radius: { units: 0.15, atLeast: 0.5, atMost: 4 }, color: voltage.colormap('viridis').domain(0, 1) },
+        ...(stage === 'vertices' ? [] : [{ edges: ['benchmark', 'Branch'], ends: ['from', 'to'], width: 0.7, ...detail === 'markers' && { markers: [{ marker: 'rectangle', at: 0.5, size: 4 }] }, ...flow ? { flow } : {} } satisfies NonNullable<Scene['marks']>[number]]),
+        { vertices: ['benchmark', 'Bus'], position: ['$x', '$y'], ...detail === 'labels' && { label: { text: '$caption', place: 'right' } },
+          ...(sampled && { elevation: voltage.scale(0, 15).domain(0, 1), color: voltage.colormap('viridis').domain(0, 1) }),
+          radius: { units: 0.15, atLeast: 0.5, atMost: 4 } },
       ],
     });
-    view = await View.create(canvas, sceneWith(0), { gpu, sources: [data, samples], camera: { pitch: 45 } });
+    view = await View.create(canvas, sceneWith(0), { gpu, sources: sampled ? [data, samples] : [data], camera: { pitch: 45 } });
     try { await view.done({ signal: AbortSignal.timeout(30_000) }); }
     catch (error) { throw new Error('Initial draw failed (' + (error instanceof Error ? error.message : String(error)) + '): ' + JSON.stringify({ waiting: view.waiting, resident: gpu.resident,
       frames: view.stats.frames, failures: view.failures.map(f => f.message) }), { cause: error }); }
     const openMs = performance.now() - started, before = gpu.work, camera = view.camera;
+    if (stage !== 'playback') return { size, budgetMiB, detail, stage, openMs, resident: gpu.resident, frames: view.stats.frames, instances: view.stats.instances };
     const play = (frame: number) => { view!.at = (frame % 60) / 20; };
     // The camera and the time shown move every frame, so every mark draws, each frame.
     const moving = await phase(gpu, view, frame => {

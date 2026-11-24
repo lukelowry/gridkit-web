@@ -1,4 +1,5 @@
 import { elementFields, targetKey, type CaseDocument, type ElementTarget } from '@gridkit/library';
+import { tables, tableOf } from '../rendering/data.js';
 import { recognize } from '../domain/views.js';
 
 const minima = new WeakMap<CaseDocument, Map<string, number>>();
@@ -37,12 +38,15 @@ export function numericIssue(value: unknown, constraint?: NumericConstraint, fie
 
 export function categoryExamples(document: CaseDocument, target: ElementTarget, field: string): (string | number)[] {
   const values = new Set<string | number>();
-  const rows = document.rows(target.collection);
-  for (let i = 0; i < Math.min(rows.length, 512) && values.size < 8; i++) {
-    const row = rows[i]!;
+  const table = tableOf(target);
+  const rows = table ? tables(document).get(table) ?? [] : document.rows(target.collection);
+  let inspected = 0;
+  for (const row of rows) {
     if (target.class && row.value.class !== target.class) continue;
+    if (++inspected > 512) break;
     const value = elementFields(row)[field];
     if (typeof value === 'string' || typeof value === 'number' && Number.isFinite(value)) values.add(value);
+    if (values.size === 8) break;
   }
   return [...values];
 }
