@@ -8,6 +8,6 @@
   },
   "devDependencies": {
     "@gridkit/library": "workspace:*",
-    "wrangler": "^4.151.3"
+    "wrangler": "^4.166.0"
   }
 }
